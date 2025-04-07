@@ -1,0 +1,25 @@
+# Main dependencies
+fastapi
+uvicorn
+python-dotenv
+pydantic
+pydantic-settings
+openai
+langchain
+langchain-openai
+langchain-community
+requests
+tenacity
+sqlmodel
+pymysql
+cryptography
+sentence-transformers
+qdrant-client
+httpx
+pytest
+
+# OpenAI Agents
+openai-agents
+
+# Utility dependencies
+python-multipart
