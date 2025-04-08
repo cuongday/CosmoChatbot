@@ -1,5 +1,5 @@
 from typing import Dict, Any, List, Optional
-from agents import function_tool, Tool
+from agents import function_tool
 from ..client.spring_client import spring_boot_client
 
 @function_tool("Thêm sản phẩm vào giỏ hàng")
@@ -12,7 +12,7 @@ def add_to_cart(product_id: str, quantity: int) -> Dict[str, Any]:
         quantity: Số lượng sản phẩm
         
     Returns:
-        Thông tin giỏ hàng sau khi thêm sản phẩm
+        Dict: Thông tin giỏ hàng sau khi thêm sản phẩm
     """
     try:
         # Nếu quantity không được chỉ định hoặc <= 0, mặc định là 1
@@ -46,7 +46,7 @@ def update_cart(product_id: str, quantity: int) -> Dict[str, Any]:
         quantity: Số lượng mới
         
     Returns:
-        Thông tin giỏ hàng sau khi cập nhật
+        Dict: Thông tin giỏ hàng sau khi cập nhật
     """
     try:
         result = spring_boot_client.update_cart_item(product_id, quantity)
@@ -68,7 +68,7 @@ def remove_from_cart(product_id: str) -> Dict[str, Any]:
         product_id: ID của sản phẩm cần xóa
         
     Returns:
-        Thông tin giỏ hàng sau khi xóa sản phẩm
+        Dict: Thông tin giỏ hàng sau khi xóa sản phẩm
     """
     try:
         result = spring_boot_client.remove_from_cart(product_id)
@@ -81,7 +81,7 @@ def remove_from_cart(product_id: str) -> Dict[str, Any]:
         print(error_msg)
         return {"success": False, "message": error_msg}
 
-@Tool(name="get_cart", description="Lấy thông tin giỏ hàng hiện tại của người dùng")
+@function_tool("Lấy thông tin giỏ hàng hiện tại")
 def get_cart() -> Dict[str, Any]:
     """
     Lấy thông tin giỏ hàng hiện tại của người dùng
@@ -95,7 +95,7 @@ def get_cart() -> Dict[str, Any]:
             return {"items": [], "total": 0}
         return cart
     except Exception as e:
-        print(f"Error getting cart: {str(e)}")
+        print(f"Lỗi khi lấy thông tin giỏ hàng: {str(e)}")
         return {"items": [], "total": 0}
 
 @function_tool("Xóa toàn bộ giỏ hàng")
@@ -104,7 +104,7 @@ def clear_cart() -> Dict[str, Any]:
     Xóa toàn bộ giỏ hàng.
     
     Returns:
-        Xác nhận giỏ hàng đã được xóa
+        Dict: Xác nhận giỏ hàng đã được xóa
     """
     try:
         result = spring_boot_client.clear_cart()
@@ -116,31 +116,51 @@ def clear_cart() -> Dict[str, Any]:
         print(error_msg)
         return {"success": False, "message": error_msg}
 
-@Tool(name="create_order", description="Tạo đơn hàng mới với thông tin thanh toán")
+@function_tool("Tạo đơn hàng mới")
 def create_order(payment_method: str, phone: str, address: str) -> Dict[str, Any]:
     """
     Tạo đơn hàng mới với thông tin thanh toán
     
     Args:
-        payment_method: Phương thức thanh toán (TRANSFER)
+        payment_method: Phương thức thanh toán (COD hoặc TRANSFER)
         phone: Số điện thoại người nhận
         address: Địa chỉ giao hàng
         
     Returns:
-        Dict: Thông tin đơn hàng vừa tạo
+        Dict: Thông tin đơn hàng vừa tạo, bao gồm:
+        - order_id: ID đơn hàng
+        - payment_method: Phương thức thanh toán
+        - status: Trạng thái đơn hàng
+        - payment_url: URL thanh toán (chỉ với TRANSFER)
+        - total_amount: Tổng tiền
+        - created_at: Thời gian tạo
     """
     try:
+        # Kiểm tra phương thức thanh toán hợp lệ
+        if payment_method not in ["COD", "TRANSFER"]:
+            raise ValueError("Phương thức thanh toán không hợp lệ. Chỉ hỗ trợ COD hoặc TRANSFER")
+            
+        # Tạo đơn hàng
         order = spring_boot_client.create_order(
             payment_method=payment_method,
             phone=phone,
             address=address
         )
+        
+        # Log thông tin đơn hàng
+        print(f"Đã tạo đơn hàng: {order.get('order_id')} - {payment_method}")
+        if payment_method == "TRANSFER" and order.get('payment_url'):
+            print(f"Payment URL: {order['payment_url']}")
+            
         return order
     except Exception as e:
-        print(f"Error creating order: {str(e)}")
-        return {}
+        print(f"Lỗi khi tạo đơn hàng: {str(e)}")
+        return {
+            "error": str(e),
+            "success": False
+        }
 
-@Tool(name="get_order_info", description="Lấy thông tin chi tiết của một đơn hàng")
+@function_tool("Lấy thông tin chi tiết đơn hàng")
 def get_order_info(order_id: str) -> Dict[str, Any]:
     """
     Lấy thông tin chi tiết của một đơn hàng
@@ -149,16 +169,30 @@ def get_order_info(order_id: str) -> Dict[str, Any]:
         order_id: ID của đơn hàng
         
     Returns:
-        Dict: Thông tin chi tiết đơn hàng
+        Dict: Thông tin chi tiết đơn hàng bao gồm:
+        - order_id: ID đơn hàng
+        - status: Trạng thái đơn hàng
+        - payment_method: Phương thức thanh toán
+        - items: Danh sách sản phẩm
+        - total_amount: Tổng tiền
+        - shipping_info: Thông tin giao hàng
+        - created_at: Thời gian tạo
     """
     try:
         order = spring_boot_client.get_order_info(order_id)
+        
+        # Log thông tin đơn hàng
+        print(f"Thông tin đơn hàng {order_id}: {order.get('status')}")
+        
         return order
     except Exception as e:
-        print(f"Error getting order info: {str(e)}")
-        return {}
+        print(f"Lỗi khi lấy thông tin đơn hàng: {str(e)}")
+        return {
+            "error": str(e),
+            "success": False
+        }
 
-@Tool(name="get_payment_info", description="Lấy thông tin thanh toán của một đơn hàng")
+@function_tool("Lấy thông tin thanh toán đơn hàng")
 def get_payment_info(order_id: str) -> Dict[str, Any]:
     """
     Lấy thông tin thanh toán của một đơn hàng
@@ -167,16 +201,28 @@ def get_payment_info(order_id: str) -> Dict[str, Any]:
         order_id: ID của đơn hàng
         
     Returns:
-        Dict: Thông tin thanh toán
+        Dict: Thông tin thanh toán bao gồm:
+        - payment_method: Phương thức thanh toán
+        - status: Trạng thái thanh toán
+        - amount: Số tiền
+        - payment_url: URL thanh toán (với TRANSFER)
+        - paid_at: Thời gian thanh toán (nếu đã thanh toán)
     """
     try:
         payment = spring_boot_client.get_payment_info(order_id)
+        
+        # Log trạng thái thanh toán
+        print(f"Trạng thái thanh toán đơn {order_id}: {payment.get('status')}")
+        
         return payment
     except Exception as e:
-        print(f"Error getting payment info: {str(e)}")
-        return {}
+        print(f"Lỗi khi lấy thông tin thanh toán: {str(e)}")
+        return {
+            "error": str(e),
+            "success": False
+        }
 
-@Tool(name="get_my_orders", description="Lấy danh sách đơn hàng của người dùng hiện tại")
+@function_tool("Lấy danh sách đơn hàng của tôi")
 def get_my_orders() -> List[Dict[str, Any]]:
     """
     Lấy danh sách đơn hàng của người dùng hiện tại
@@ -188,18 +234,18 @@ def get_my_orders() -> List[Dict[str, Any]]:
         orders = spring_boot_client.get_my_orders()
         return orders
     except Exception as e:
-        print(f"Error getting orders: {str(e)}")
+        print(f"Lỗi khi lấy danh sách đơn hàng: {str(e)}")
         return []
 
 # Định nghĩa các tools cho OpenAI Agent
 cart_tools = [
-    function_tool(add_to_cart),
-    function_tool(get_cart),
-    function_tool(update_cart),
-    function_tool(remove_from_cart),
-    function_tool(clear_cart),
-    function_tool(create_order),
-    function_tool(get_order_info),
-    function_tool(get_payment_info),
-    function_tool(get_my_orders)
+    add_to_cart,
+    get_cart,
+    update_cart,
+    remove_from_cart,
+    clear_cart,
+    create_order,
+    get_order_info,
+    get_payment_info,
+    get_my_orders
 ] 

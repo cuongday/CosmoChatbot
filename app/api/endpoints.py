@@ -6,7 +6,11 @@ import json
 
 # from ..core.security import verify_api_key
 from ..core.config import settings
-from ..agents.manager_agent import manager_agent
+from ..agents.manager_agent import manager_agent, ManagerAgentWrapper
+from ..agents.product_agent import product_agent, ProductAgentWrapper
+from ..agents.cart_agent import cart_agent, CartAgentWrapper
+from ..agents.shop_agent import shop_agent, ShopAgentWrapper
+from ..agents.checkout_agent import checkout_agent, CheckoutAgentWrapper
 from ..rag.vector_store import vector_store
 from ..client.spring_client import spring_boot_client
 from ..models.api_models import ChatRequest, ChatResponse, ProductRequest, ProductResponse, ShopRequest, ShopResponse, SyncRequest, AutoSyncRequest, SyncResponse
@@ -16,151 +20,131 @@ from ..db.models import Conversation, Message
 
 router = APIRouter()
 
+# Khởi tạo các agent
+manager_agent = ManagerAgentWrapper()
+product_agent = ProductAgentWrapper()
+cart_agent = CartAgentWrapper()
+shop_agent = ShopAgentWrapper()
+checkout_agent = CheckoutAgentWrapper()
+
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest, session: Session = Depends(get_session)):
+async def chat(
+    request: ChatRequest,
+    session: Session = Depends(get_session)
+) -> ChatResponse:
     """
-    Endpoint xử lý tin nhắn chat từ người dùng và duy trì lịch sử trò chuyện
+    Endpoint xử lý tin nhắn chat từ người dùng
     """
     try:
+        # Cập nhật token cho spring boot client nếu có
+        if request.auth_token:
+            spring_boot_client.update_auth_token(request.auth_token)
+            
         # Khởi tạo conversation service
         conversation_service = ConversationService(session)
         
-        # Cập nhật token xác thực cho spring_boot_client nếu có
-        spring_boot_client.update_auth_token(request.auth_token)
-        
         # Xử lý conversation_id/thread_id
-        conversation_id = request.thread_id
-        if not conversation_id and request.user_id:
+        thread_id = request.thread_id
+        if not thread_id and request.user_id:
             # Tạo conversation mới nếu chưa có
             conversation = conversation_service.create_conversation(
-                user_id=request.user_id, 
+                user_id=request.user_id,
                 title=request.thread_title
             )
-            conversation_id = conversation.id
-        
-        # Lưu tin nhắn của người dùng vào database nếu có conversation_id
-        if conversation_id:
+            thread_id = conversation.id
+            
+        # Lưu tin nhắn của người dùng
+        if thread_id:
             conversation_service.add_message(
-                conversation_id=conversation_id,
+                conversation_id=thread_id,
                 role="user",
                 content=request.message,
                 metadata={"user_id": request.user_id} if request.user_id else None
             )
             
-            # Lấy lịch sử trò chuyện để cung cấp ngữ cảnh
-            conversation_history = conversation_service.get_conversation_history(conversation_id)
+            # Lấy lịch sử trò chuyện từ database
+            conversation_history = conversation_service.get_conversation_history(thread_id)
         else:
             conversation_history = []
-        
-        # Xử lý tin nhắn bằng manager agent (sử dụng OpenAI Agents SDK)
-        result = await manager_agent.process_with_history(
+            
+        # Phân tích yêu cầu bằng Manager Agent
+        manager_response = await manager_agent.process(
             message=request.message,
-            conversation_history=conversation_history,
-            thread_id=conversation_id,
+            thread_id=thread_id,
             user_id=request.user_id,
             auth_token=request.auth_token
         )
         
-        # Kiểm tra nếu manager agent quyết định chuyển tiếp đến agent khác
-        if result.get("handoff", False):
-            target_agent_id = result.get("target_agent")
-            original_message = result.get("original_message", request.message)
+        # Kiểm tra nếu manager quyết định chuyển tiếp
+        if manager_response.get("handoff", False):
+            agent_type = manager_response.get("target_agent", "")
             
-            # Chuyển tiếp đến agent thích hợp
-            if target_agent_id == "product":
-                from ..agents.product_agent import product_agent
-                agent_result = await product_agent.process_with_history(
-                    message=original_message,
+            # Chọn agent phù hợp để xử lý
+            if agent_type == "product":
+                agent = product_agent
+            elif agent_type == "cart":
+                agent = cart_agent
+            elif agent_type == "shop":
+                agent = shop_agent
+            elif agent_type == "checkout":
+                agent = checkout_agent
+            else:
+                raise ValueError(f"Agent type không hợp lệ: {agent_type}")
+                
+            # Xử lý tin nhắn với agent đã chọn
+            if thread_id and conversation_history:
+                # Có lịch sử trò chuyện
+                response = await agent.process_with_history(
+                    message=request.message,
                     conversation_history=conversation_history,
-                    thread_id=conversation_id,
+                    thread_id=thread_id,
+                    user_id=request.user_id,
+                    auth_token=request.auth_token
+                )
+            else:
+                # Không có lịch sử trò chuyện
+                response = await agent.process(
+                    message=request.message,
+                    thread_id=thread_id,
                     user_id=request.user_id,
                     auth_token=request.auth_token
                 )
                 
-                # Lưu trả lời từ agent vào database
-                if conversation_id:
-                    conversation_service.add_message(
-                        conversation_id=conversation_id,
-                        role="assistant",
-                        content=agent_result.get("message", ""),
-                        metadata={"agent": "product"}
-                    )
-                
-                return ChatResponse(
-                    message=agent_result.get("message", ""),
-                    source_documents=agent_result.get("source_documents", []),
-                    conversation_id=conversation_id
-                )
-            
-            elif target_agent_id == "shop":
-                from ..agents.shop_agent import shop_agent
-                agent_result = await shop_agent.process_with_history(
-                    message=original_message,
-                    conversation_history=conversation_history,
-                    thread_id=conversation_id,
-                    user_id=request.user_id,
-                    auth_token=request.auth_token
+            # Lưu câu trả lời từ agent vào database
+            if thread_id:
+                conversation_service.add_message(
+                    conversation_id=thread_id,
+                    role="assistant",
+                    content=response.get("message", ""),
+                    metadata={"agent": agent_type}
                 )
                 
-                # Lưu trả lời từ agent vào database
-                if conversation_id:
-                    conversation_service.add_message(
-                        conversation_id=conversation_id,
-                        role="assistant",
-                        content=agent_result.get("message", ""),
-                        metadata={"agent": "shop"}
-                    )
-                
-                return ChatResponse(
-                    message=agent_result.get("message", ""),
-                    source_documents=agent_result.get("source_documents", []),
-                    conversation_id=conversation_id
+            return ChatResponse(
+                message=response.get("message", ""),
+                source_documents=response.get("source_documents", []),
+                thread_id=thread_id
+            )
+        else:
+            # Nếu không có chuyển tiếp, lưu và trả về response trực tiếp từ manager
+            if thread_id:
+                conversation_service.add_message(
+                    conversation_id=thread_id,
+                    role="assistant",
+                    content=manager_response.get("message", ""),
+                    metadata={"agent": "manager"}
                 )
                 
-            elif target_agent_id == "cart":
-                from ..agents.cart_agent import cart_agent
-                agent_result = await cart_agent.process_with_history(
-                    message=original_message,
-                    conversation_history=conversation_history,
-                    thread_id=conversation_id,
-                    user_id=request.user_id,
-                    auth_token=request.auth_token
-                )
-                
-                # Lưu trả lời từ agent vào database
-                if conversation_id:
-                    conversation_service.add_message(
-                        conversation_id=conversation_id,
-                        role="assistant",
-                        content=agent_result.get("message", ""),
-                        metadata={"agent": "cart"}
-                    )
-                
-                return ChatResponse(
-                    message=agent_result.get("message", ""),
-                    source_documents=agent_result.get("source_documents", []),
-                    conversation_id=conversation_id
-                )
-        
-        # Nếu không handoff, trả về phản hồi trực tiếp từ manager agent
-        response_message = result.get("response", result.get("message", ""))  # Thử lấy từ response trước, nếu không có thì lấy từ message
-        
-        # Lưu trả lời từ manager agent vào database
-        if conversation_id:
-            conversation_service.add_message(
-                conversation_id=conversation_id,
-                role="assistant",
-                content=response_message,
-                metadata={"agent": "manager"}
+            return ChatResponse(
+                message=manager_response.get("message", ""),
+                source_documents=manager_response.get("source_documents", []),
+                thread_id=thread_id
             )
         
-        return ChatResponse(
-            message=response_message,
-            source_documents=result.get("source_documents", []),
-            conversation_id=conversation_id
-        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Lỗi xử lý tin nhắn: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Lỗi khi xử lý tin nhắn: {str(e)}"
+        )
 
 @router.post("/sync", response_model=SyncResponse)
 async def sync_data(request: SyncRequest, background_tasks: BackgroundTasks):

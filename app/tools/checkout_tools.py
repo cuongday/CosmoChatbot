@@ -28,8 +28,8 @@ def get_shipping_methods() -> List[Dict[str, Any]]:
     """
     # Thông tin giả định - thực tế sẽ gọi Spring Boot API
     shipping_methods = [
-        {"id": "standard", "name": "Giao hàng tiêu chuẩn", "price": 30000, "eta": "3-5 ngày"},
-        {"id": "express", "name": "Giao hàng nhanh", "price": 60000, "eta": "1-2 ngày"}
+        {"id": "standard", "name": "Giao hàng tiêu chuẩn", "price": 30000, "eta": "3-5 h"},
+        {"id": "express", "name": "Giao hàng nhanh", "price": 60000, "eta": "1-2 h"}
     ]
     return shipping_methods
 
@@ -43,9 +43,7 @@ def get_payment_methods() -> List[Dict[str, Any]]:
     # Thông tin giả định - thực tế sẽ gọi Spring Boot API
     payment_methods = [
         {"id": "cod", "name": "Thanh toán khi nhận hàng"},
-        {"id": "bank_transfer", "name": "Chuyển khoản ngân hàng"},
-        {"id": "credit_card", "name": "Thẻ tín dụng/Ghi nợ"},
-        {"id": "momo", "name": "Ví MoMo"}
+        {"id": "transfer", "name": "Chuyển khoản ngân hàng"},
     ]
     return payment_methods
 

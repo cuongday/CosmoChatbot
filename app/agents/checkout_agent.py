@@ -45,11 +45,23 @@ class CheckoutAgentWrapper:
             auth_token: Token xác thực JWT
         """
         # Cập nhật token cho Spring Boot client
+        print(f"Auth token received: {auth_token[:20]}...") if auth_token else print("Auth token is None")
         spring_boot_client.update_auth_token(auth_token)
         
         # Kiểm tra giỏ hàng trước khi xử lý
         cart = spring_boot_client.get_cart()
-        if not cart or not cart.get("items"):
+        print(f"Checkout Agent - Get Cart Result: {cart}")
+        
+        if not cart:
+            print("Checkout Agent - Cart is None")
+            return {
+                "message": "Giỏ hàng của bạn đang trống. Vui lòng thêm sản phẩm vào giỏ hàng trước khi thanh toán.",
+                "source_documents": [],
+                "thread_id": thread_id
+            }
+            
+        if not cart.get("items"):
+            print(f"Checkout Agent - Cart items is empty or not found. Cart structure: {cart}")
             return {
                 "message": "Giỏ hàng của bạn đang trống. Vui lòng thêm sản phẩm vào giỏ hàng trước khi thanh toán.",
                 "source_documents": [],
@@ -57,6 +69,7 @@ class CheckoutAgentWrapper:
             }
             
         # Sử dụng Runner để xử lý tin nhắn
+        print(f"Checkout Agent - Processing message with cart: {cart}")
         result = await Runner.run(self.agent, message)
         
         # Nếu có order_id trong kết quả, thêm thông tin đơn hàng vào source_documents
@@ -95,11 +108,23 @@ class CheckoutAgentWrapper:
             Dict: Kết quả từ agent
         """
         # Cập nhật token cho Spring Boot client
+        print(f"Auth token received in process_with_history: {auth_token[:20]}...") if auth_token else print("Auth token is None in process_with_history")
         spring_boot_client.update_auth_token(auth_token)
         
         # Kiểm tra giỏ hàng trước khi xử lý
         cart = spring_boot_client.get_cart()
-        if not cart or not cart.get("items"):
+        print(f"Checkout Agent (with history) - Get Cart Result: {cart}")
+        
+        if not cart:
+            print("Checkout Agent (with history) - Cart is None")
+            return {
+                "message": "Giỏ hàng của bạn đang trống. Vui lòng thêm sản phẩm vào giỏ hàng trước khi thanh toán.",
+                "source_documents": [],
+                "thread_id": thread_id
+            }
+            
+        if not cart.get("items"):
+            print(f"Checkout Agent (with history) - Cart items is empty or not found. Cart structure: {cart}")
             return {
                 "message": "Giỏ hàng của bạn đang trống. Vui lòng thêm sản phẩm vào giỏ hàng trước khi thanh toán.",
                 "source_documents": [],

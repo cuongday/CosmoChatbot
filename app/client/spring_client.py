@@ -236,8 +236,38 @@ class SpringBootClient:
         response = requests.get(url, headers=self.headers)
         
         if response.status_code == 200:
-            return response.json()
-        return {"items": [], "total": 0}
+            json_data = response.json()
+            print(f"Response giỏ hàng: {json_data}")
+            
+            # Kiểm tra cấu trúc JSON và trích xuất dữ liệu
+            if json_data and "data" in json_data:
+                items = json_data["data"]
+                if isinstance(items, list) and len(items) > 0:
+                    # Định dạng lại dữ liệu để phù hợp với mong đợi của agent
+                    formatted_items = []
+                    total_price = 0
+                    
+                    for item in items:
+                        product = item.get("product", {})
+                        formatted_item = {
+                            "id": item.get("id"),
+                            "product_id": product.get("id"),
+                            "name": product.get("name"),
+                            "price": product.get("sellPrice", 0),
+                            "quantity": item.get("quantity", 0),
+                            "image": product.get("image")
+                        }
+                        formatted_items.append(formatted_item)
+                        total_price += (product.get("sellPrice", 0) * item.get("quantity", 0))
+                    
+                    return {
+                        "items": formatted_items,
+                        "total": total_price,
+                        "count": len(formatted_items)
+                    }
+                return {"items": [], "total": 0, "count": 0}
+            return {"items": [], "total": 0, "count": 0}
+        return {"items": [], "total": 0, "count": 0}
     
     def clear_cart(self) -> Dict[str, Any]:
         """

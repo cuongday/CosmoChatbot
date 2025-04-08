@@ -19,7 +19,7 @@ class ChatResponse(BaseModel):
     """
     message: str
     source_documents: Optional[List[Dict[str, Any]]] = None
-    conversation_id: Optional[str] = None  # Trả về conversation_id cho frontend
+    thread_id: Optional[str] = None  # ID của thread chat
 
 
 class ProductRequest(BaseModel):
