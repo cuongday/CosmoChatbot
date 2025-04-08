@@ -1,3 +1,4 @@
+# Python
 /.env
 .venv/
 __pycache__/
@@ -6,3 +7,12 @@ __pycache__/
 *.pyd
 *.pyw
 *.pyz
+
+# Cursor
+.cursor
+.cursor/**
+.cursor/rules/
+.cursor/settings/
+*.mdc
+
+
