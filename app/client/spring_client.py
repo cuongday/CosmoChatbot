@@ -303,10 +303,38 @@ class SpringBootClient:
         response = requests.post(url, json=payload, headers=self.headers)
         print(f"Status code: {response.status_code}")
         
-        if response.status_code == 200:
+        if response.status_code == 200 or response.status_code == 201:
             result = response.json()
             print(f"Kết quả API: {result}")
-            return result
+            
+            # Khởi tạo các biến mặc định
+            order_id = None
+            payment_url = None
+            
+            # Trích xuất dữ liệu từ cấu trúc response
+            if "data" in result:
+                if "order" in result["data"]:
+                    order = result["data"]["order"]
+                    order_id = order.get("id")
+                    # Có thể payment_url nằm trong order hoặc ngoài order
+                    if "paymentUrl" in order:
+                        payment_url = order.get("paymentUrl")
+                
+                # Payment URL có thể nằm trực tiếp trong data
+                if "paymentUrl" in result["data"]:
+                    payment_url = result["data"].get("paymentUrl")
+            
+            print(f"Đã tạo đơn hàng: {order_id} - {payment_method}")
+            if payment_method == "TRANSFER" and payment_url:
+                print(f"Payment URL: {payment_url}")
+            
+            return {
+                "success": True,  # Đặt cờ success=True vì API đã trả về thành công
+                "message": result.get("message", "Tạo đơn hàng thành công"),
+                "order_id": order_id,
+                "payment_url": payment_url,
+                "payment_method": payment_method
+            }
         else:
             error_msg = f"Lỗi khi tạo đơn hàng: HTTP {response.status_code}"
             if response.text:
