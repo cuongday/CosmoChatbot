@@ -1,4 +1,4 @@
-from agents import Agent, Tool, Runner
+from agents import Agent, Runner, function_tool
 from ..core.config import settings
 from ..tools.shop_tools import get_shop_info, get_shipping_info, get_return_policy, get_contact_info, get_user_orders, get_order_details
 from ..prompts.shop_agent import SHOP_AGENT_PROMPT
@@ -77,20 +77,21 @@ class ShopAgentWrapper:
         # Cập nhật token xác thực cho spring_boot_client nếu có
         spring_boot_client.update_auth_token(auth_token)
         
-        # Chuẩn bị ngữ cảnh từ lịch sử trò chuyện
-        context = ""
+        # Kết hợp lịch sử hội thoại với tin nhắn hiện tại
+        combined_message = message
         if conversation_history and len(conversation_history) > 0:
-            context = "Đây là lịch sử trò chuyện trước đó:\n"
-            for msg in conversation_history:
+            # Lấy tối đa 5 tin nhắn gần nhất
+            recent_history = conversation_history[-5:] if len(conversation_history) > 5 else conversation_history
+            
+            history_text = ""
+            for msg in recent_history:
                 role = "Người dùng" if msg["role"] == "user" else "Trợ lý"
-                context += f"{role}: {msg['content']}\n"
-            context += "\nDựa vào lịch sử trên, hãy trả lời tin nhắn mới này:\n"
+                history_text += f"{role}: {msg['content']}\n"
+            
+            combined_message = f"Lịch sử hội thoại gần đây:\n{history_text}\nNgười dùng hiện tại: {message}"
         
-        # Tạo tin nhắn với ngữ cảnh
-        message_with_context = f"{context}{message}" if context else message
-        
-        # Sử dụng Runner từ OpenAI Agents SDK để xử lý tin nhắn
-        result = await Runner.run(self.agent, message_with_context)
+        # Sử dụng Runner với tin nhắn đã kết hợp
+        result = await Runner.run(self.agent, combined_message)
         
         # Trả về kết quả
         return {

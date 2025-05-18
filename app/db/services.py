@@ -78,6 +78,13 @@ class ConversationService:
             .limit(limit)
         return self.session.exec(query).all()
 
+    def get_all_messages(self, conversation_id: str) -> List[Message]:
+        """Get all messages from a conversation, ordered by created_at."""
+        query = select(Message) \
+            .where(Message.conversation_id == conversation_id) \
+            .order_by(Message.created_at.asc())
+        return self.session.exec(query).all()
+
     def get_conversation_history(self, conversation_id: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Get the chat history for a conversation in a format suitable for OpenAI."""
         messages = self.get_messages(conversation_id, limit)

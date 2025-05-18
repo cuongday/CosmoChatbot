@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from typing import Optional, Dict, Any, List
 from sqlmodel import Session
 import json
+import re
 
 # from ..core.security import verify_api_key
 from ..core.config import settings
@@ -180,6 +181,7 @@ async def auto_sync_data(request: AutoSyncRequest, background_tasks: BackgroundT
         if request.type == "products":
             # Lấy dữ liệu sản phẩm từ Spring Boot API
             print(f"[AUTO-SYNC] Đang lấy dữ liệu từ Spring Boot API...")
+            print(f"[AUTO-SYNC] URL: {settings.SPRING_BOOT_API_URL}")
             products = spring_boot_client.get_all_products(limit=request.limit)
             
             if not products:
@@ -191,14 +193,23 @@ async def auto_sync_data(request: AutoSyncRequest, background_tasks: BackgroundT
                 )
             
             print(f"[AUTO-SYNC] Lấy được {len(products)} sản phẩm từ API")
-            print(f"[AUTO-SYNC] Đang thêm dữ liệu vào vector database...")
             
-            # Gọi trực tiếp hàm thay vì qua background task để dễ debug
+            # Xóa dữ liệu cũ trước khi thêm dữ liệu mới
+            print(f"[AUTO-SYNC] Tiến hành xóa toàn bộ dữ liệu cũ...")
             try:
-                # Hiển thị cấu hình Qdrant
-                print(f"[AUTO-SYNC] Qdrant config: host={settings.QDRANT_HOST}, port={settings.QDRANT_PORT}, collection={settings.QDRANT_COLLECTION_NAME}")
+                vector_store.clear()
+                print(f"[AUTO-SYNC] Đã xóa thành công dữ liệu cũ")
+            except Exception as e:
+                print(f"[AUTO-SYNC] Lỗi khi xóa dữ liệu cũ: {str(e)}")
+                # Tiếp tục thêm dữ liệu mới ngay cả khi xóa dữ liệu cũ thất bại
+            
+            print(f"[AUTO-SYNC] Đang thêm dữ liệu mới vào vector database...")
+            
+            try:
+                # Hiển thị cấu hình Milvus
+                print(f"[AUTO-SYNC] Milvus config: uri={settings.MILVUS_URI}, collection={settings.MILVUS_COLLECTION_NAME}")
                 
-                # Thêm dữ liệu trực tiếp thay vì qua background task
+                # Thêm dữ liệu mới
                 vector_store.add_products(products)
                 
                 print(f"[AUTO-SYNC] Hoàn thành quá trình thêm dữ liệu vào vector database")
@@ -213,7 +224,7 @@ async def auto_sync_data(request: AutoSyncRequest, background_tasks: BackgroundT
             return SyncResponse(
                 status="success",
                 count=len(products),
-                message=f"Đã tự động đồng bộ {len(products)} sản phẩm vào vector database"
+                message=f"Đã ghi đè và đồng bộ {len(products)} sản phẩm vào vector database"
             )
         else:
             print(f"[AUTO-SYNC] Loại dữ liệu '{request.type}' không được hỗ trợ")
@@ -274,4 +285,69 @@ async def get_conversation_messages(conversation_id: str, limit: int = 50, sessi
             for msg in messages
         ]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Lỗi lấy tin nhắn: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Lỗi lấy tin nhắn: {str(e)}")
+
+@router.get("/threads/{thread_id}/history", response_model=List[Dict[str, Any]])
+async def get_thread_history(thread_id: str, session: Session = Depends(get_session)):
+    """
+    Lấy toàn bộ lịch sử hội thoại của một thread
+    """
+    try:
+        conversation_service = ConversationService(session)
+        messages = conversation_service.get_all_messages(thread_id)
+        
+        return [
+            {
+                "id": str(msg.id),
+                "role": msg.role,
+                "content": msg.content,
+                "created_at": msg.created_at.isoformat(),
+                "metadata": json.loads(msg.meta_data) if msg.meta_data else {}
+            }
+            for msg in messages
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi lấy lịch sử hội thoại: {str(e)}")
+
+def replace_markdown_images_with_html(message: str) -> str:
+    """
+    Thay thế cú pháp hình ảnh markdown ![alt](url) trong văn bản thành thẻ <img> HTML
+    
+    Args:
+        message: Nội dung tin nhắn có thể chứa cú pháp hình ảnh markdown
+        
+    Returns:
+        Nội dung tin nhắn với các hình ảnh được thay thế bằng thẻ HTML
+    """
+    if not message:
+        return message
+        
+    # Mẫu regex để tìm cú pháp markdown cho hình ảnh: ![alt text](image_url)
+    image_pattern = r'!\[(.*?)\]\((https?://[^)]+)\)'
+    
+    # Thay thế bằng thẻ HTML <img>
+    html_message = re.sub(image_pattern, r'<img src="\2" alt="\1" />', message)
+    
+    return html_message
+
+@router.get("/threads/{thread_id}/history-with-images", response_model=List[Dict[str, Any]])
+async def get_thread_history_with_images(thread_id: str, session: Session = Depends(get_session)):
+    """
+    Lấy toàn bộ lịch sử hội thoại của một thread và chuyển đổi markdown image thành HTML
+    """
+    try:
+        conversation_service = ConversationService(session)
+        messages = conversation_service.get_all_messages(thread_id)
+        
+        return [
+            {
+                "id": str(msg.id),
+                "role": msg.role,
+                "content": replace_markdown_images_with_html(msg.content),
+                "created_at": msg.created_at.isoformat(),
+                "metadata": json.loads(msg.meta_data) if msg.meta_data else {}
+            }
+            for msg in messages
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi lấy lịch sử hội thoại: {str(e)}") 

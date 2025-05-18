@@ -1,4 +1,4 @@
-from agents import Agent, Runner, handoff, Tool, RunContextWrapper
+from agents import Agent, Runner, function_tool
 from ..core.config import settings
 from ..tools.manager_tools import get_assistant_info
 from ..prompts.manager_agent import MANAGER_AGENT_PROMPT
@@ -19,64 +19,74 @@ class ManagerAgentWrapper:
         # Tạo hooks cho manager agent
         self.hooks = CustomAgentHooks("Manager")
         
-        # Tạo agent sử dụng OpenAI Agents SDK
+        # Định nghĩa các agent khác như tools
+        self.product_tool = product_agent.agent.as_tool(
+            tool_name="consult_product_expert",
+            tool_description="Chuyển câu hỏi cho chuyên gia sản phẩm khi khách hàng hỏi về thông tin sản phẩm, so sánh sản phẩm, tìm kiếm sản phẩm"
+        )
+        
+        self.cart_tool = cart_agent.agent.as_tool(
+            tool_name="consult_cart_expert",
+            tool_description="Chuyển câu hỏi cho chuyên gia giỏ hàng khi khách hàng muốn thêm sản phẩm vào giỏ hàng, xem giỏ hàng, sửa giỏ hàng"
+        )
+        
+        self.shop_tool = shop_agent.agent.as_tool(
+            tool_name="consult_shop_expert",
+            tool_description="Chuyển câu hỏi cho chuyên gia cửa hàng khi khách hàng hỏi về thông tin cửa hàng, chính sách vận chuyển, đổi trả"
+        )
+        
+        self.checkout_tool = checkout_agent.agent.as_tool(
+            tool_name="consult_checkout_expert",
+            tool_description="Chuyển câu hỏi cho chuyên gia thanh toán khi khách hàng muốn thanh toán, tạo đơn hàng, xem thông tin đơn hàng"
+        )
+        
+        # Tạo agent chính sử dụng các agent khác như tools
         self.agent = Agent(
             name="Manager Assistant",
             instructions=MANAGER_AGENT_PROMPT,
             model=settings.CHAT_MODEL,
             tools=[
-                get_assistant_info  # Tool cung cấp thông tin về các assistant có sẵn
+                get_assistant_info,
+                self.product_tool,
+                self.cart_tool,
+                self.shop_tool,
+                self.checkout_tool
             ],
             hooks=self.hooks
         )
         
-        # Định nghĩa handoffs theo cú pháp chính thức của OpenAI Agents SDK
-        self.product_handoff = product_agent.agent.as_tool(
-            tool_name="consult_product_expert",
-            tool_description="Chuyển câu hỏi cho chuyên gia sản phẩm bánh khi khách hàng hỏi về sản phẩm"
-        )
-        
-        self.cart_handoff = cart_agent.agent.as_tool(
-            tool_name="consult_cart_expert",
-            tool_description="Chuyển câu hỏi cho chuyên gia giỏ hàng khi khách hàng muốn đặt bánh hoặc thanh toán"
-        )
-        
-        self.shop_handoff = shop_agent.agent.as_tool(
-            tool_name="consult_shop_expert",
-            tool_description="Chuyển câu hỏi cho chuyên gia cửa hàng khi khách hàng hỏi về cửa hàng"
-        )
-        
-        self.checkout_handoff = checkout_agent.agent.as_tool(
-            tool_name="consult_checkout_expert",
-            tool_description="Chuyển câu hỏi cho chuyên gia thanh toán khi khách hàng muốn thanh toán hoặc tạo đơn hàng"
-        )
-    
-    async def _analyze_message(self, message: str, context: str = "") -> str:
-        """
-        Phân tích tin nhắn để xác định agent phù hợp
-        """
-        message_with_context = f"{context}{message}" if context else message
-        
-        analysis_hooks = CustomAgentHooks("Analyzer")
-        analysis_agent = Agent(
+        # Tạo agent phân tích riêng biệt
+        self.analysis_agent = Agent(
             name="Analyzer",
             instructions="""
             Phân tích tin nhắn của người dùng và xác định nội dung thuộc loại nào:
-            1. product - Nếu liên quan đến sản phẩm, tìm kiếm, so sánh giá
+            1. product - Nếu liên quan đến sản phẩm, tìm kiếm, so sánh giá, thông tin về bánh
             2. cart - Nếu liên quan đến giỏ hàng, thêm/xóa sản phẩm
             3. shop - Nếu liên quan đến thông tin cửa hàng
             4. checkout - Nếu liên quan đến thanh toán, tạo đơn hàng
-            5. unknown - Nếu không rõ ràng
             
-            Chỉ trả về một trong các giá trị trên, không thêm bất kỳ thông tin nào khác.
+            QUAN TRỌNG: Bạn PHẢI chọn một trong bốn loại trên. KHÔNG BAO GIỜ trả về "unknown".
+            Nếu tin nhắn mơ hồ hoặc không rõ ràng, hãy chọn "product" làm mặc định.
+            
+            Chỉ trả về một trong bốn giá trị: product, cart, shop, checkout. Không thêm bất kỳ thông tin nào khác.
             """,
             model=settings.CHAT_MODEL,
-            tools=[],
-            hooks=analysis_hooks
+            hooks=CustomAgentHooks("Analyzer")
         )
+    
+    async def _analyze_message(self, message: str) -> str:
+        """
+        Phân tích tin nhắn để xác định agent phù hợp
+        """
+        result = await Runner.run(self.analysis_agent, message)
+        analysis_result = result.final_output.strip().lower()
         
-        result = await Runner.run(analysis_agent, message_with_context)
-        return result.final_output.strip().lower()
+        # Nếu kết quả là unknown hoặc không thuộc các loại được định nghĩa,
+        # mặc định sử dụng product agent (theo hướng dẫn trong prompt)
+        if analysis_result not in ["product", "cart", "shop", "checkout"]:
+            return "product"
+            
+        return analysis_result
 
     async def process(self, message: str, thread_id: str = None, user_id: str = None, auth_token: str = None):
         """
@@ -95,64 +105,53 @@ class ManagerAgentWrapper:
         analysis_result = await self._analyze_message(message)
         
         # Chuyển tiếp dựa trên kết quả phân tích
-        if analysis_result == "product":
+        if analysis_result in ["product", "cart", "shop", "checkout"]:
             return {
                 "handoff": True,
-                "target_agent": "product",
-                "original_message": message,
-                "thread_id": thread_id,
-                "user_id": user_id,
-                "auth_token": auth_token
-            }
-        elif analysis_result == "cart":
-            return {
-                "handoff": True,
-                "target_agent": "cart",
-                "original_message": message,
-                "thread_id": thread_id,
-                "user_id": user_id,
-                "auth_token": auth_token
-            }
-        elif analysis_result == "shop":
-            return {
-                "handoff": True,
-                "target_agent": "shop",
-                "original_message": message,
-                "thread_id": thread_id,
-                "user_id": user_id,
-                "auth_token": auth_token
-            }
-        elif analysis_result == "checkout":
-            return {
-                "handoff": True,
-                "target_agent": "checkout",
+                "target_agent": analysis_result,
                 "original_message": message,
                 "thread_id": thread_id,
                 "user_id": user_id,
                 "auth_token": auth_token
             }
         
-        # Nếu không rõ ràng, sử dụng orchestrator
-        orchestrator = Agent(
-            name="Orchestrator",
-            instructions=MANAGER_AGENT_PROMPT,
-            model=settings.CHAT_MODEL,
-            tools=[
-                get_assistant_info,
-                self.product_handoff,
-                self.cart_handoff,
-                self.shop_handoff,
-                self.checkout_handoff
-            ],
-            hooks=self.hooks
-        )
+        # Không nên đạt tới đây vì _analyze_message luôn trả về một trong các giá trị trên
+        # Nhưng để đảm bảo, vẫn sử dụng Manager Agent để xử lý
+        result = await Runner.run(self.agent, message)
         
-        result = await Runner.run(orchestrator, message)
+        # Kiểm tra xem trong kết quả Manager Agent có gọi tool nào không
+        if hasattr(result, 'tool_results') and result.tool_results:
+            for tool_result in result.tool_results:
+                # Nếu Manager gọi một trong các tool chuyển tiếp,
+                # trả về kết quả của tool đó thay vì của Manager
+                if tool_result.tool_name in ['consult_product_expert', 'consult_cart_expert', 
+                                           'consult_shop_expert', 'consult_checkout_expert']:
+                    # Xác định target_agent từ tên tool
+                    target_map = {
+                        'consult_product_expert': 'product',
+                        'consult_cart_expert': 'cart',
+                        'consult_shop_expert': 'shop',
+                        'consult_checkout_expert': 'checkout'
+                    }
+                    target_agent = target_map.get(tool_result.tool_name, 'product')
+                    
+                    return {
+                        "handoff": True,
+                        "target_agent": target_agent,
+                        "original_message": message,
+                        "thread_id": thread_id,
+                        "user_id": user_id,
+                        "auth_token": auth_token
+                    }
         
+        # Mặc định chuyển tiếp tới Product Agent nếu Manager không thực hiện chuyển tiếp
         return {
-            "message": result.final_output,
-            "source_documents": [],
-            "thread_id": thread_id
+            "handoff": True,
+            "target_agent": "product",
+            "original_message": message,
+            "thread_id": thread_id,
+            "user_id": user_id,
+            "auth_token": auth_token
         }
     
     async def process_with_history(
@@ -179,79 +178,74 @@ class ManagerAgentWrapper:
         # Cập nhật token xác thực cho spring_boot_client nếu có
         spring_boot_client.update_auth_token(auth_token)
         
-        # Chuẩn bị ngữ cảnh
-        context = ""
-        if conversation_history and len(conversation_history) > 0:
-            context = "Đây là lịch sử trò chuyện trước đó:\n"
-            for msg in conversation_history:
-                role = "Người dùng" if msg["role"] == "user" else "Trợ lý"
-                context += f"{role}: {msg['content']}\n"
-            context += "\nDựa vào lịch sử trên, hãy trả lời tin nhắn mới này:\n"
-        
-        # Phân tích tin nhắn với ngữ cảnh
-        analysis_result = await self._analyze_message(message, context)
+        # Phân tích tin nhắn mới nhất (không cần lịch sử cho việc phân tích)
+        analysis_result = await self._analyze_message(message)
         
         # Chuyển tiếp dựa trên kết quả phân tích
-        if analysis_result == "product":
+        if analysis_result in ["product", "cart", "shop", "checkout"]:
             return {
                 "handoff": True,
-                "target_agent": "product",
+                "target_agent": analysis_result,
                 "original_message": message,
                 "thread_id": thread_id,
                 "user_id": user_id,
-                "auth_token": auth_token
-            }
-        elif analysis_result == "cart":
-            return {
-                "handoff": True,
-                "target_agent": "cart",
-                "original_message": message,
-                "thread_id": thread_id,
-                "user_id": user_id,
-                "auth_token": auth_token
-            }
-        elif analysis_result == "shop":
-            return {
-                "handoff": True,
-                "target_agent": "shop",
-                "original_message": message,
-                "thread_id": thread_id,
-                "user_id": user_id,
-                "auth_token": auth_token
-            }
-        elif analysis_result == "checkout":
-            return {
-                "handoff": True,
-                "target_agent": "checkout",
-                "original_message": message,
-                "thread_id": thread_id,
-                "user_id": user_id,
-                "auth_token": auth_token
+                "auth_token": auth_token,
+                "conversation_history": conversation_history
             }
             
-        # Nếu không rõ ràng, sử dụng orchestrator với ngữ cảnh
-        message_with_context = f"{context}{message}" if context else message
+        # Không nên đạt tới đây vì _analyze_message luôn trả về một trong các giá trị trên
+        # Nhưng để đảm bảo, vẫn sử dụng Manager Agent để xử lý
         
-        orchestrator = Agent(
-            name="Orchestrator",
-            instructions=MANAGER_AGENT_PROMPT,
-            model=settings.CHAT_MODEL,
-            tools=[
-                get_assistant_info,
-                self.product_handoff,
-                self.cart_handoff,
-                self.shop_handoff,
-                self.checkout_handoff
-            ],
-            hooks=self.hooks
-        )
+        # Kết hợp lịch sử hội thoại với tin nhắn hiện tại
+        combined_message = message
+        if conversation_history and len(conversation_history) > 0:
+            # Lấy tối đa 5 tin nhắn gần nhất
+            recent_history = conversation_history[-5:] if len(conversation_history) > 5 else conversation_history
+            
+            history_text = ""
+            for msg in recent_history:
+                role = "Người dùng" if msg["role"] == "user" else "Trợ lý"
+                history_text += f"{role}: {msg['content']}\n"
+            
+            combined_message = f"Lịch sử hội thoại gần đây:\n{history_text}\nNgười dùng hiện tại: {message}"
         
-        result = await Runner.run(orchestrator, message_with_context)
+        result = await Runner.run(self.agent, combined_message)
         
+        # Kiểm tra xem trong kết quả Manager Agent có gọi tool nào không
+        if hasattr(result, 'tool_results') and result.tool_results:
+            for tool_result in result.tool_results:
+                # Nếu Manager gọi một trong các tool chuyển tiếp,
+                # trả về kết quả của tool đó thay vì của Manager
+                if tool_result.tool_name in ['consult_product_expert', 'consult_cart_expert', 
+                                           'consult_shop_expert', 'consult_checkout_expert']:
+                    # Xác định target_agent từ tên tool
+                    target_map = {
+                        'consult_product_expert': 'product',
+                        'consult_cart_expert': 'cart',
+                        'consult_shop_expert': 'shop',
+                        'consult_checkout_expert': 'checkout'
+                    }
+                    target_agent = target_map.get(tool_result.tool_name, 'product')
+                    
+                    return {
+                        "handoff": True,
+                        "target_agent": target_agent,
+                        "original_message": message,
+                        "thread_id": thread_id,
+                        "user_id": user_id,
+                        "auth_token": auth_token,
+                        "conversation_history": conversation_history
+                    }
+        
+        # Mặc định chuyển tiếp tới Product Agent nếu Manager không thực hiện chuyển tiếp
         return {
-            "message": result.final_output,
-            "source_documents": [],
-            "thread_id": thread_id
+            "handoff": True,
+            "target_agent": "product",
+            "original_message": message,
+            "thread_id": thread_id,
+            "user_id": user_id,
+            "auth_token": auth_token,
+            "conversation_history": conversation_history
         }
 
 # Singleton instance

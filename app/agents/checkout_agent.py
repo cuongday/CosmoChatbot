@@ -1,14 +1,16 @@
-from agents import Agent, Tool, Runner
+from agents import Agent, Runner, function_tool
 from ..core.config import settings
 from ..tools.cart_tools import (
     get_cart, create_order, get_order_info, 
     get_payment_info, get_my_orders
 )
-from ..tools.product_tools import get_product_by_id
+from ..tools.product_tools import get_product_by_id, check_product_availability, rag_product_search
 from ..prompts.checkout_agent import CHECKOUT_AGENT_PROMPT
 from ..core.hooks import CustomAgentHooks
 from ..client.spring_client import spring_boot_client
 from typing import List, Dict, Any, Optional
+import json
+import asyncio
 
 class CheckoutAgentWrapper:
     """
@@ -29,7 +31,9 @@ class CheckoutAgentWrapper:
                 create_order,       # Tạo đơn hàng
                 get_order_info,     # Lấy thông tin đơn hàng
                 get_payment_info,   # Lấy thông tin thanh toán
-                get_my_orders      # Lấy danh sách đơn hàng của tôi
+                get_my_orders,      # Lấy danh sách đơn hàng của tôi
+                check_product_availability,
+                rag_product_search
             ],
             hooks=self.hooks
         )
@@ -131,20 +135,21 @@ class CheckoutAgentWrapper:
                 "thread_id": thread_id
             }
         
-        # Chuẩn bị ngữ cảnh từ lịch sử trò chuyện
-        context = ""
+        # Kết hợp lịch sử hội thoại với tin nhắn hiện tại
+        combined_message = message
         if conversation_history and len(conversation_history) > 0:
-            context = "Đây là lịch sử trò chuyện trước đó:\n"
-            for msg in conversation_history:
+            # Lấy tối đa 5 tin nhắn gần nhất
+            recent_history = conversation_history[-5:] if len(conversation_history) > 5 else conversation_history
+            
+            history_text = ""
+            for msg in recent_history:
                 role = "Người dùng" if msg["role"] == "user" else "Trợ lý"
-                context += f"{role}: {msg['content']}\n"
-            context += "\nDựa vào lịch sử trên, hãy trả lời tin nhắn mới này:\n"
+                history_text += f"{role}: {msg['content']}\n"
+            
+            combined_message = f"Lịch sử hội thoại gần đây:\n{history_text}\nNgười dùng hiện tại: {message}"
         
-        # Tạo tin nhắn với ngữ cảnh
-        message_with_context = f"{context}{message}" if context else message
-        
-        # Sử dụng Runner để xử lý tin nhắn
-        result = await Runner.run(self.agent, message_with_context)
+        # Sử dụng Runner để xử lý tin nhắn đã kết hợp
+        result = await Runner.run(self.agent, combined_message)
         
         # Nếu có order_id trong kết quả, thêm thông tin đơn hàng vào source_documents
         source_documents = []
@@ -159,6 +164,118 @@ class CheckoutAgentWrapper:
             "source_documents": source_documents,
             "thread_id": thread_id
         }
+
+    def _extract_products_from_result(self, result: Any) -> List[Dict[str, Any]]:
+        """
+        Trích xuất thông tin sản phẩm từ kết quả của tool
+        
+        Args:
+            result: Kết quả từ tool
+            
+        Returns:
+            List[Dict]: Danh sách thông tin sản phẩm
+        """
+        source_documents = []
+        try:
+            # Kiểm tra xem trong kết quả có chứa thông tin sản phẩm không
+            if hasattr(result, 'tool_results') and result.tool_results:
+                for tool_result in result.tool_results:
+                    # Xử lý kết quả từ get_cart
+                    if tool_result.tool_name == 'get_cart':
+                        # Parse kết quả JSON từ tool
+                        if isinstance(tool_result.output, str):
+                            try:
+                                cart_data = json.loads(tool_result.output)
+                            except:
+                                continue
+                        else:
+                            cart_data = tool_result.output
+                            
+                        # Trích xuất thông tin sản phẩm từ cart
+                        if isinstance(cart_data, dict) and "items" in cart_data:
+                            for item in cart_data["items"]:
+                                if isinstance(item, dict) and "product" in item:
+                                    product = item["product"]
+                                    # Lấy URL hình ảnh
+                                    image_url = product.get("image_url", "")
+                                    # Tạo thẻ img HTML nếu có URL hình ảnh
+                                    image_html = f'<img src="{image_url}" alt="{product.get("name", "Sản phẩm bánh")}" />' if image_url else ""
+                                    
+                                    source_documents.append({
+                                        "id": product.get("id", ""),
+                                        "name": product.get("name", ""),
+                                        "price": product.get("price", 0),
+                                        "quantity_in_cart": item.get("quantity", 0),
+                                        "image_url": image_url,
+                                        "image_html": image_html,  # Thêm trường mới chứa thẻ HTML
+                                        "in_cart": True
+                                    })
+                                    
+                    # Xử lý kết quả từ get_product_by_id hoặc check_product_availability
+                    elif tool_result.tool_name in ['get_product_by_id', 'check_product_availability', 'rag_product_search']:
+                        # Parse kết quả JSON từ tool
+                        if isinstance(tool_result.output, str):
+                            try:
+                                products = json.loads(tool_result.output)
+                            except:
+                                continue
+                        else:
+                            products = tool_result.output
+                            
+                        # Xử lý trường hợp kết quả là một list hoặc dict
+                        if isinstance(products, dict):
+                            products = [products]
+                        elif not isinstance(products, list):
+                            continue
+                            
+                        # Thêm từng sản phẩm vào source_documents
+                        for product in products:
+                            if isinstance(product, dict):
+                                # Lấy URL hình ảnh
+                                image_url = product.get("image_url", "")
+                                # Tạo thẻ img HTML nếu có URL hình ảnh
+                                image_html = f'<img src="{image_url}" alt="{product.get("name", "Sản phẩm bánh")}" />' if image_url else ""
+                                
+                                source_documents.append({
+                                    "id": product.get("id", ""),
+                                    "name": product.get("name", ""),
+                                    "price": product.get("price", 0),
+                                    "description": product.get("description", ""),
+                                    "image_url": image_url,
+                                    "image_html": image_html,  # Thêm trường mới chứa thẻ HTML
+                                    "category": product.get("category", ""),
+                                    "status": product.get("status", ""),
+                                    "quantity": product.get("quantity", 0),
+                                    "available": product.get("available", None),
+                                    "relevance_score": product.get("relevance_score", 0)
+                                })
+                    
+                    # Xử lý kết quả từ create_order
+                    elif tool_result.tool_name == 'create_order':
+                        # Parse kết quả JSON từ tool
+                        if isinstance(tool_result.output, str):
+                            try:
+                                order_data = json.loads(tool_result.output)
+                            except:
+                                continue
+                        else:
+                            order_data = tool_result.output
+                            
+                        # Trích xuất thông tin đơn hàng
+                        if isinstance(order_data, dict):
+                            order_info = {
+                                "order_id": order_data.get("id", ""),
+                                "total_amount": order_data.get("total_amount", 0),
+                                "payment_method": order_data.get("payment_method", ""),
+                                "payment_url": order_data.get("payment_url", ""),
+                                "status": order_data.get("status", ""),
+                                "created_at": order_data.get("created_at", "")
+                            }
+                            source_documents.append(order_info)
+        except Exception as e:
+            print(f"Error extracting products: {str(e)}")
+            
+        return source_documents
 
 # Singleton instance
 checkout_agent = CheckoutAgentWrapper() 

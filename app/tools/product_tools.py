@@ -29,70 +29,82 @@ def get_product_by_id(product_id: str) -> Dict:
     result = spring_boot_client.get_product_by_id(product_id)
     return result if result else {}
 
-@function_tool("Lấy danh sách sản phẩm theo danh mục")
-def get_products_by_category(category_id: str) -> List[Dict]:
+@function_tool("Tìm kiếm sản phẩm bằng RAG")
+def rag_product_search(query: str, limit: int) -> List[Dict]:
     """
-    Lấy danh sách sản phẩm theo danh mục sử dụng Spring Filter
+    Tìm kiếm thông tin sản phẩm bằng RAG (Retrieval Augmented Generation) từ vector database
     
     Args:
-        category_id: ID hoặc tên danh mục
+        query: Câu truy vấn tìm kiếm sản phẩm
+        limit: Số lượng kết quả trả về tối đa
         
     Returns:
-        Danh sách sản phẩm thuộc danh mục
+        Danh sách sản phẩm phù hợp với truy vấn từ vector database
     """
-    try:
-        print(f"Gọi get_products_by_category với tham số: {category_id}")
+    from ..rag.retriever import product_retriever
+    # Xử lý giá trị mặc định cho limit bên trong hàm
+    if limit is None or limit <= 0:
+        limit = 5
+    
+    # Làm phong phú query nếu quá ngắn
+    enhanced_query = query
+    if len(query.split()) <= 2:
+        enhanced_query = f"sản phẩm {query} mô tả chi tiết"
         
-        # Sử dụng Spring Filter để tìm theo category
-        filter_query = f"category.id:{category_id}"
-        if not category_id.isdigit():
-            filter_query = f"category.name~'{category_id}'"
-            
-        products = spring_boot_client.search_products(filter_query)
+    print(f"Thực hiện tìm kiếm RAG với query gốc: '{query}'")
+    if enhanced_query != query:
+        print(f"Query đã nâng cao: '{enhanced_query}'")
         
-        if products:
-            print(f"Tìm thấy {len(products)} sản phẩm trong danh mục")
-            # Bổ sung thêm thông tin
-            for product in products:
-                if "category" in product and product["category"]:
-                    product["category_name"] = product["category"].get("name", "")
-                    product["category_id"] = str(product["category"].get("id", ""))
-        else:
-            print("Không tìm thấy sản phẩm nào trong danh mục này")
+    results = product_retriever.retrieve(enhanced_query, limit)
+    if results:
+        print(f"Tìm thấy {len(results)} sản phẩm từ RAG")
         
-        return products
-    except Exception as e:
-        print(f"Lỗi trong get_products_by_category: {str(e)}")
-        return []
+        # Thêm debug thông tin để kiểm tra kết quả
+        for i, result in enumerate(results[:2]):  # Chỉ hiển thị 2 kết quả đầu để tránh spam log
+            print(f"  {i+1}. {result.get('name', 'Không tên')} - Giá: {result.get('price', 0):,.0f} VNĐ")
+    else:
+        print("Không tìm thấy sản phẩm nào từ RAG")
+    return results
 
-@function_tool("Tìm kiếm sản phẩm theo khoảng giá")
-def search_products_by_price_range(min_price: float = None, max_price: float = None) -> List[Dict]:
+@function_tool("Kiểm tra sản phẩm còn hàng")
+def check_product_availability(product_id: str) -> Dict:
+    product = spring_boot_client.get_product_by_id(product_id)
+    if not product:
+        return {"id": product_id, "available": False, "message": "Không tìm thấy sản phẩm"}
+    
+    is_available = product.get("quantity", 0) > 0
+    return {
+        "id": product.get("id", ""),
+        "name": product.get("name", ""),
+        "price": product.get("sellPrice", 0),
+        "quantity": product.get("quantity", 0),
+        "status": product.get("status", ""),
+        "available": is_available,
+        "message": "Sản phẩm còn hàng" if is_available else "Sản phẩm hết hàng hoặc không còn hoạt động"
+    }
+
+@function_tool("Tìm kiếm sản phẩm theo khoảng giá từ API")
+def find_products_by_price_range(min_price: float, max_price: float) -> List[Dict]:
     """
-    Tìm kiếm sản phẩm theo khoảng giá sử dụng Spring Filter
+    Tìm kiếm sản phẩm trong khoảng giá trực tiếp từ API backend
     
     Args:
-        min_price: Giá tối thiểu
-        max_price: Giá tối đa
+        min_price: Giá tối thiểu (VD: 100000)
+        max_price: Giá tối đa (VD: 500000)
         
     Returns:
         Danh sách sản phẩm trong khoảng giá
     """
-    return spring_boot_client.get_products_by_price_range(min_price, max_price)
-
-@function_tool("So sánh thông tin các sản phẩm")
-def compare_products(product_ids: List[str]) -> List[Dict]:
-    """
-    So sánh thông tin của nhiều sản phẩm
+    print(f"Tìm kiếm sản phẩm trong khoảng giá {min_price:,.0f} - {max_price:,.0f} VNĐ từ API")
+    results = spring_boot_client.get_products_by_price_range(min_price, max_price)
     
-    Args:
-        product_ids: Danh sách ID các sản phẩm cần so sánh
-    
-    Returns:
-        Thông tin chi tiết của các sản phẩm để so sánh
-    """
-    products = []
-    for product_id in product_ids:
-        product = spring_boot_client.get_product_by_id(product_id)
-        if product:
-            products.append(product)
-    return products 
+    # Thêm thông tin chi tiết để debug
+    if results:
+        print(f"Tìm thấy {len(results)} sản phẩm trong khoảng giá từ API")
+        # Hiển thị thông tin 2 sản phẩm đầu tiên để debug
+        for i, product in enumerate(results[:2]):
+            print(f"  {i+1}. {product.get('name', 'Không tên')} - Giá: {product.get('sellPrice', product.get('price', 0)):,.0f} VNĐ")
+    else:
+        print("Không tìm thấy sản phẩm nào trong khoảng giá yêu cầu")
+        
+    return results 

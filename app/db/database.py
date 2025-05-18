@@ -22,7 +22,7 @@ logger.info(f"Connecting to database at {DATABASE_URL.split('@')[0].split('://')
 # Các tham số pool được truyền riêng biệt thay vì trong URL
 engine = create_engine(
     DATABASE_URL,
-    echo=settings.DEBUG,
+    echo=False,  # Tắt SQL logging
     pool_size=5,
     max_overflow=10,
     pool_timeout=30,

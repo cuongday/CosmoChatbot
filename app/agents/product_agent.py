@@ -1,6 +1,6 @@
-from agents import Agent, Tool, Runner
+from agents import Agent, Runner, function_tool
 from ..core.config import settings
-from ..tools.product_tools import get_product_info, get_product_by_id, compare_products, get_products_by_category
+from ..tools.product_tools import get_product_by_id, rag_product_search, check_product_availability, find_products_by_price_range
 from ..prompts.product_agent import PRODUCT_AGENT_PROMPT
 from ..client.spring_client import spring_boot_client
 from ..core.hooks import CustomAgentHooks
@@ -21,10 +21,10 @@ class ProductAgentWrapper:
             instructions=PRODUCT_AGENT_PROMPT,
             model=settings.CHAT_MODEL,
             tools=[
-                get_product_info,        # Tool tìm kiếm thông tin sản phẩm
-                get_product_by_id,       # Tool lấy thông tin sản phẩm theo ID
-                compare_products,        # Tool so sánh các sản phẩm
-                get_products_by_category # Tool lấy sản phẩm theo danh mục
+                rag_product_search,       # Tool tìm kiếm RAG sản phẩm
+                get_product_by_id,        # Tool lấy thông tin sản phẩm theo ID
+                check_product_availability, # Tool kiểm tra sản phẩm còn hàng
+                find_products_by_price_range, # Tool tìm kiếm sản phẩm theo khoảng giá trực tiếp từ API
             ],
             hooks=self.hooks
         )
@@ -45,7 +45,7 @@ class ProductAgentWrapper:
             if hasattr(result, 'tool_results') and result.tool_results:
                 for tool_result in result.tool_results:
                     # Chỉ xử lý kết quả từ các tool liên quan đến sản phẩm
-                    if tool_result.tool_name in ['get_product_info', 'get_product_by_id', 'get_products_by_category']:
+                    if tool_result.tool_name in ['get_product_by_id', 'rag_product_search', 'check_product_availability', 'find_products_by_price_range']:
                         # Parse kết quả JSON từ tool
                         if isinstance(tool_result.output, str):
                             try:
@@ -64,15 +64,22 @@ class ProductAgentWrapper:
                         # Thêm từng sản phẩm vào source_documents
                         for product in products:
                             if isinstance(product, dict):
+                                # Lấy URL hình ảnh
+                                image_url = product.get("image_url", "")
+                                # Tạo thẻ img HTML nếu có URL hình ảnh
+                                image_html = f'<img src="{image_url}" alt="{product.get("name", "Sản phẩm bánh")}" />' if image_url else ""
+                                
                                 source_documents.append({
                                     "id": product.get("id", ""),
                                     "name": product.get("name", ""),
                                     "price": product.get("price", 0),
                                     "description": product.get("description", ""),
-                                    "image_url": product.get("image_url", ""),
+                                    "image_url": image_url,
+                                    "image_html": image_html,  # Thêm trường mới chứa thẻ HTML
                                     "category": product.get("category", ""),
                                     "status": product.get("status", ""),
                                     "quantity": product.get("quantity", 0),
+                                    "available": product.get("available", None),
                                     "relevance_score": product.get("relevance_score", 0)
                                 })
         except Exception as e:
@@ -129,20 +136,21 @@ class ProductAgentWrapper:
         # Cập nhật token xác thực cho spring_boot_client nếu có
         spring_boot_client.update_auth_token(auth_token)
         
-        # Chuẩn bị ngữ cảnh từ lịch sử trò chuyện
-        context = ""
+        # Kết hợp lịch sử hội thoại với tin nhắn hiện tại
+        combined_message = message
         if conversation_history and len(conversation_history) > 0:
-            context = "Đây là lịch sử trò chuyện trước đó:\n"
-            for msg in conversation_history:
+            # Lấy tối đa 5 tin nhắn gần nhất
+            recent_history = conversation_history[-5:] if len(conversation_history) > 5 else conversation_history
+            
+            history_text = ""
+            for msg in recent_history:
                 role = "Người dùng" if msg["role"] == "user" else "Trợ lý"
-                context += f"{role}: {msg['content']}\n"
-            context += "\nDựa vào lịch sử trên, hãy trả lời tin nhắn mới này:\n"
+                history_text += f"{role}: {msg['content']}\n"
+            
+            combined_message = f"Lịch sử hội thoại gần đây:\n{history_text}\nNgười dùng hiện tại: {message}"
         
-        # Tạo tin nhắn với ngữ cảnh
-        message_with_context = f"{context}{message}" if context else message
-        
-        # Sử dụng Runner từ OpenAI Agents SDK để xử lý tin nhắn
-        result = await Runner.run(self.agent, message_with_context)
+        # Sử dụng Runner với chuỗi tin nhắn đã kết hợp
+        result = await Runner.run(self.agent, combined_message)
         
         # Trích xuất thông tin sản phẩm từ kết quả của tool
         source_documents = self._extract_products_from_result(result)

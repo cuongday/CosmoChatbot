@@ -1,12 +1,11 @@
 import os
 import logging
 from typing import List, Dict, Any, Optional
-from langchain_community.vectorstores import Qdrant
+from langchain_milvus import Milvus
 from langchain.schema import Document
 from .embeddings import embedding_provider
 from ..core.config import settings
-import qdrant_client
-from qdrant_client.models import Distance, VectorParams
+from pymilvus import utility, Collection, connections
 import traceback
 
 # Cấu hình logging
@@ -22,152 +21,162 @@ class VectorStore:
         self.embedding_function = embedding_provider.model
         
         # Lấy giá trị cấu hình từ settings
-        self.host = settings.QDRANT_HOST
-        self.port = settings.QDRANT_PORT
-        self.collection_name = settings.QDRANT_COLLECTION_NAME
+        self.uri = settings.MILVUS_URI
         
-        logger.info(f"Vector Store được khởi tạo với: host={self.host}, port={self.port}, collection={self.collection_name}")
-        print(f"[QDRANT] Khởi tạo Qdrant client với host={self.host}, port={self.port}, collection={self.collection_name}")
+        # Đảm bảo URI có định dạng đúng với protocol
+        if self.uri and not (self.uri.startswith('http://') or self.uri.startswith('https://')):
+            self.uri = f"http://{self.uri}"
+            logger.info(f"Đã thêm protocol 'http://' vào Milvus URI: {self.uri}")
+            print(f"[MILVUS] Đã thêm protocol 'http://' vào Milvus URI: {self.uri}")
+            
+        self.collection_name = settings.MILVUS_COLLECTION_NAME
+        self.force_recreate = settings.MILVUS_FORCE_RECREATE
         
-        self._init_db()
+        logger.info(f"Vector Store được khởi tạo với: uri={self.uri}, collection={self.collection_name}")
+        print(f"[MILVUS] Khởi tạo Milvus client với uri={self.uri}, collection={self.collection_name}")
+        
+        # Kết nối đến Milvus
+        self.connection_name = "default"
+        self._connect_to_milvus()
+        
+        # Khởi tạo vector store
+        self._init_vector_store()
     
     def _ensure_directory(self):
         """
-        Đảm bảo thư mục lưu trữ vector db tồn tại
+        Đảm bảo thư mục tồn tại
         """
         os.makedirs(self.persist_directory, exist_ok=True)
         logger.info(f"Thư mục {self.persist_directory} đã được tạo hoặc đã tồn tại")
+        
+    def _connect_to_milvus(self):
+        """
+        Kết nối đến Milvus server
+        """
+        try:
+            logger.info(f"Kết nối tới Milvus server: {self.uri}")
+            print(f"[MILVUS] Kết nối tới Milvus server: {self.uri}")
+            
+            # Đảm bảo URI có định dạng đúng (http://host:port)
+            connections.connect(
+                alias=self.connection_name,
+                uri=self.uri
+            )
+            logger.info(f"Kết nối thành công đến Milvus: {self.uri}")
+            print(f"[MILVUS] Kết nối thành công đến Milvus: {self.uri}")
+        except Exception as e:
+            logger.error(f"Lỗi kết nối đến Milvus: {str(e)}")
+            print(f"[MILVUS] Lỗi kết nối đến Milvus: {str(e)}")
+            traceback.print_exc()
+            raise
     
-    def _check_collection_exists(self):
+    def _check_collection_exists(self) -> bool:
         """
         Kiểm tra xem collection đã tồn tại chưa
         """
         try:
-            collections = self.client.get_collections().collections
-            collection_names = [collection.name for collection in collections]
-            exists = self.collection_name in collection_names
+            # Sử dụng PyMilvus utility để kiểm tra collection
+            exists = utility.has_collection(self.collection_name)
             logger.info(f"Kiểm tra collection '{self.collection_name}': {'Tồn tại' if exists else 'Không tồn tại'}")
-            print(f"[QDRANT] Kiểm tra collection '{self.collection_name}': {'Tồn tại' if exists else 'Không tồn tại'}")
+            print(f"[MILVUS] Kiểm tra collection '{self.collection_name}': {'Tồn tại' if exists else 'Không tồn tại'}")
             return exists
         except Exception as e:
-            error_msg = f"Lỗi khi kiểm tra collection: {str(e)}"
-            logger.error(error_msg)
-            print(f"[QDRANT] {error_msg}")
-            traceback.print_exc()
+            logger.error(f"Lỗi kiểm tra collection: {str(e)}")
+            print(f"[MILVUS] Lỗi kiểm tra collection: {str(e)}")
             return False
     
-    def _create_collection(self):
+    def _init_vector_store(self):
         """
-        Tạo collection mới trong Qdrant
-        """
-        try:
-            # Lấy kích thước vector từ embedding model
-            logger.info("Tạo vector test để xác định kích thước...")
-            print("[QDRANT] Đang tạo vector test để xác định kích thước...")
-            vector_size = len(self.embedding_function.embed_query("Test query"))
-            
-            logger.info(f"Tạo mới collection '{self.collection_name}' với vector_size={vector_size}")
-            print(f"[QDRANT] Tạo mới collection '{self.collection_name}' với vector_size={vector_size}")
-            
-            # Tạo collection với các tham số phù hợp
-            self.client.create_collection(
-                collection_name=self.collection_name,
-                vectors_config=VectorParams(
-                    size=vector_size,
-                    distance=Distance.COSINE
-                )
-            )
-            logger.info(f"Đã tạo mới collection '{self.collection_name}' thành công")
-            print(f"[QDRANT] Đã tạo mới collection '{self.collection_name}' thành công")
-            return True
-        except Exception as e:
-            error_msg = f"Lỗi khi tạo collection: {str(e)}"
-            logger.error(error_msg)
-            print(f"[QDRANT] {error_msg}")
-            traceback.print_exc()
-            return False
-    
-    def _init_db(self):
-        """
-        Khởi tạo vector database
+        Khởi tạo vector store
         """
         try:
-            # Tạo Qdrant client
-            logger.info(f"Kết nối tới Qdrant server: {self.host}:{self.port}")
-            print(f"[QDRANT] Kết nối tới Qdrant server: {self.host}:{self.port}")
+            logger.info(f"Khởi tạo Langchain Milvus vector store với collection '{self.collection_name}'")
+            print(f"[MILVUS] Khởi tạo Langchain Milvus vector store với collection '{self.collection_name}'")
             
-            self.client = qdrant_client.QdrantClient(
-                host=self.host,
-                port=self.port
-            )
+            # Kiểm tra collection tồn tại
+            exists = self._check_collection_exists()
             
-            # Kiểm tra kết nối bằng cách lấy danh sách collections thay vì dùng get_cluster_info
-            try:
-                collections = self.client.get_collections()
-                logger.info(f"Kết nối thành công, có {len(collections.collections)} collections")
-                print(f"[QDRANT] Kết nối thành công, có {len(collections.collections)} collections")
-            except Exception as e:
-                logger.error(f"Không thể kết nối tới Qdrant server: {str(e)}")
-                print(f"[QDRANT] Không thể kết nối tới Qdrant server: {str(e)}")
-                raise
+            # Xóa collection cũ nếu force_recreate=True
+            if exists and self.force_recreate:
+                logger.info(f"Xóa collection '{self.collection_name}' cũ theo yêu cầu force_recreate")
+                print(f"[MILVUS] Xóa collection '{self.collection_name}' cũ theo yêu cầu force_recreate")
+                utility.drop_collection(self.collection_name)
+                exists = False
             
-            # Kiểm tra xem có cần xóa và tạo lại collection không
-            if settings.QDRANT_FORCE_RECREATE and self._check_collection_exists():
-                logger.warning(f"Cài đặt QDRANT_FORCE_RECREATE=True, xóa collection '{self.collection_name}' hiện tại...")
-                print(f"[QDRANT] Cài đặt QDRANT_FORCE_RECREATE=True, xóa collection '{self.collection_name}' hiện tại...")
-                self.client.delete_collection(collection_name=self.collection_name)
-                logger.info(f"Đã xóa collection '{self.collection_name}' để tạo mới")
-                print(f"[QDRANT] Đã xóa collection '{self.collection_name}' để tạo mới")
-            
-            # Kiểm tra và tạo collection nếu chưa tồn tại
-            if not self._check_collection_exists():
+            # Tạo mới collection nếu chưa tồn tại
+            if not exists:
                 logger.info(f"Collection '{self.collection_name}' không tồn tại. Đang tạo mới...")
-                print(f"[QDRANT] Collection '{self.collection_name}' không tồn tại. Đang tạo mới...")
-                self._create_collection()
+                print(f"[MILVUS] Collection '{self.collection_name}' không tồn tại. Đang tạo mới...")
+                
+                # Sử dụng langchain_milvus để tạo vector store mới
+                # Kết nối đã được thiết lập ở trên, chỉ cần chỉ định connection_args cho rõ ràng
+                connection_args = {"uri": self.uri}
+                
+                self.vector_store = Milvus(
+                    embedding_function=self.embedding_function,
+                    collection_name=self.collection_name,
+                    connection_args=connection_args,
+                    auto_id=True  # Tự động tạo ID cho văn bản
+                )
+                
+                print(f"[MILVUS] Đã tạo mới collection '{self.collection_name}' thành công")
+            else:
+                # Kết nối đến collection đã tồn tại
+                connection_args = {"uri": self.uri}
+                
+                self.vector_store = Milvus(
+                    embedding_function=self.embedding_function,
+                    collection_name=self.collection_name,
+                    connection_args=connection_args,
+                    auto_id=True  # Tự động tạo ID cho văn bản
+                )
             
-            # Kết nối với Qdrant và khởi tạo vector store
-            logger.info(f"Khởi tạo Langchain Qdrant vector store với collection '{self.collection_name}'")
-            print(f"[QDRANT] Khởi tạo Langchain Qdrant vector store với collection '{self.collection_name}'")
-            
-            # Sử dụng embeddings thay vì embedding_function theo API mới
-            self.db = Qdrant(
-                client=self.client,
-                collection_name=self.collection_name,
-                embeddings=self.embedding_function
-            )
             logger.info("Vector store đã sẵn sàng")
-            print("[QDRANT] Vector store đã sẵn sàng")
-            
+            print("[MILVUS] Vector store đã sẵn sàng")
         except Exception as e:
-            error_msg = f"Lỗi khi khởi tạo Vector Store: {str(e)}"
-            logger.error(error_msg)
-            print(f"[QDRANT] {error_msg}")
+            logger.error(f"Lỗi khởi tạo vector store: {str(e)}")
+            print(f"[MILVUS] Lỗi khởi tạo vector store: {str(e)}")
             traceback.print_exc()
             raise
+    
+    def add_documents(self, documents: List[Document]):
+        """
+        Thêm tài liệu vào vector store
+        """
+        try:
+            # Tạo IDs cho documents nếu cần
+            ids = [str(i) for i in range(len(documents))]
+            self.vector_store.add_documents(documents, ids=ids)
+            return True
+        except Exception as e:
+            logger.error(f"Lỗi khi thêm tài liệu: {str(e)}")
+            return False
     
     def add_products(self, products: List[Dict[str, Any]]):
         """
         Thêm các sản phẩm vào vector database
         """
         logger.info(f"Bắt đầu thêm {len(products) if products else 0} sản phẩm vào vector database")
-        print(f"[QDRANT] Bắt đầu thêm {len(products) if products else 0} sản phẩm vào vector database")
+        print(f"[MILVUS] Bắt đầu thêm {len(products) if products else 0} sản phẩm vào vector database")
         
         if not products:
             logger.warning("Không có sản phẩm nào để thêm vào vector database")
-            print("[QDRANT] Không có sản phẩm nào để thêm vào vector database")
+            print("[MILVUS] Không có sản phẩm nào để thêm vào vector database")
             return
         
         try:    
             documents = []
+            ids = [] # Danh sách IDs cho documents
+            
             for idx, product in enumerate(products):
                 try:
                     # Lấy ID của sản phẩm để log
                     product_id = product.get("id", "không có ID")
                     
                     # Tạo văn bản phong phú từ thông tin sản phẩm
-                    product_text = f"Sản phẩm {product.get('name', '')} có mã số {product.get('id', '')}. "
+                    product_text = f"Sản phẩm {product.get('name', '')} có mã sản phẩm {product.get('id', '')}. "
                     product_text += f"Mô tả: {product.get('description', '')}. "
-                    product_text += f"Giá bán: {product.get('sell_price', product.get('price', 0))} VNĐ. "
+                    product_text += f"Giá bán: {product.get('sellPrice', product.get('price', 0))} VNĐ. "
                     
                     if product.get('quantity') is not None:
                         product_text += f"Số lượng tồn kho: {product.get('quantity')}. "
@@ -175,13 +184,17 @@ class VectorStore:
                     if product.get('status') is not None:
                         product_text += f"Trạng thái: {product.get('status')}. "
                     
-                    if product.get('category_id') is not None:
-                        product_text += f"Thuộc danh mục: {product.get('category_id')}. "
+                    if product.get('category') is not None:
+                        product_text += f"Thuộc danh mục: {product.get('category', {}).get('name', '')}. "
+                    
+                    # Thêm thông tin nhà cung cấp nếu có
+                    if product.get('supplier') is not None:
+                        product_text += f"Nhà cung cấp: {product.get('supplier', {}).get('name', '')}. "
                     
                     # Log mẫu cho vài sản phẩm đầu tiên
                     if idx < 2:
                         logger.info(f"Mẫu sản phẩm {product_id}: {product_text[:100]}...")
-                        print(f"[QDRANT] Mẫu sản phẩm {product_id}: {product_text[:100]}...")
+                        print(f"[MILVUS] Mẫu sản phẩm {product_id}: {product_text[:100]}...")
                     
                     # Tạo document với metadata
                     doc = Document(
@@ -189,57 +202,45 @@ class VectorStore:
                         metadata={
                             "product_id": str(product.get("id", "")),  # Đảm bảo ID dạng string
                             "name": product.get("name", ""),
-                            "price": float(product.get("sell_price", product.get("price", 0))),
-                            "image_url": product.get("image", product.get("image_url", "")),
-                            "category": str(product.get("category_id", "")),
+                            "price": float(product.get("sellPrice", product.get("price", 0))),
+                            "image_url": product.get("image", product.get("imageUrl", "")),
+                            "category": product.get("category", {}).get("name", ""),
                             "status": product.get("status", ""),
                             "quantity": int(product.get("quantity", 0)),
-                            "created_at": str(product.get("created_at", "")),
-                            "updated_at": str(product.get("updated_at", ""))
+                            "supplier_name": product.get("supplier", {}).get("name", ""),
+                            "created_at": str(product.get("createdAt", "")),
+                            "updated_at": str(product.get("updatedAt", ""))
                         }
                     )
                     documents.append(doc)
+                    
+                    # Tạo ID cho document (sử dụng ID sản phẩm nếu có hoặc tạo mới)
+                    doc_id = f"product_{product.get('id', str(idx))}"
+                    ids.append(doc_id)
+                    
                 except Exception as e:
                     logger.error(f"Lỗi khi xử lý sản phẩm {product.get('id', 'không có ID')}: {str(e)}")
-                    print(f"[QDRANT] Lỗi khi xử lý sản phẩm {product.get('id', 'không có ID')}: {str(e)}")
+                    print(f"[MILVUS] Lỗi khi xử lý sản phẩm {product.get('id', 'không có ID')}: {str(e)}")
                     # Tiếp tục với sản phẩm tiếp theo
             
             if not documents:
                 logger.warning("Không có documents nào được tạo từ sản phẩm")
-                print("[QDRANT] Không có documents nào được tạo từ sản phẩm")
+                print("[MILVUS] Không có documents nào được tạo từ sản phẩm")
                 return
                 
             logger.info(f"Đã chuẩn bị {len(documents)} documents để thêm vào collection '{self.collection_name}'")
-            print(f"[QDRANT] Đã chuẩn bị {len(documents)} documents để thêm vào collection '{self.collection_name}'")
+            print(f"[MILVUS] Đã chuẩn bị {len(documents)} documents để thêm vào collection '{self.collection_name}'")
             
-            # Kiểm tra và tạo collection nếu chưa tồn tại
-            if not self._check_collection_exists():
-                logger.warning(f"Collection '{self.collection_name}' không tồn tại. Đang tạo mới...")
-                print(f"[QDRANT] Collection '{self.collection_name}' không tồn tại. Đang tạo mới...")
-                self._create_collection()
-                # Tạo lại kết nối
-                self._init_db()
-            
-            # Tạo embedding cho một document để kiểm tra
-            logger.info("Kiểm tra embedding với document đầu tiên...")
-            print("[QDRANT] Kiểm tra embedding với document đầu tiên...")
-            test_embedding = self.embedding_function.embed_documents([documents[0].page_content])[0]
-            logger.info(f"Test embedding size: {len(test_embedding)}")
-            print(f"[QDRANT] Test embedding size: {len(test_embedding)}")
-            
-            # Thêm documents vào vector database
-            logger.info(f"Bắt đầu thêm {len(documents)} documents vào Qdrant...")
-            print(f"[QDRANT] Bắt đầu thêm {len(documents)} documents vào Qdrant...")
-            
-            self.db.add_documents(documents)
+            # Thêm documents vào vector database với IDs
+            self.vector_store.add_documents(documents, ids=ids)
             
             logger.info(f"Đã thêm thành công {len(documents)} documents vào collection '{self.collection_name}'")
-            print(f"[QDRANT] Đã thêm thành công {len(documents)} documents vào collection '{self.collection_name}'")
+            print(f"[MILVUS] Đã thêm thành công {len(documents)} documents vào collection '{self.collection_name}'")
             
         except Exception as e:
             error_msg = f"Lỗi khi thêm sản phẩm vào vector database: {str(e)}"
             logger.error(error_msg)
-            print(f"[QDRANT] {error_msg}")
+            print(f"[MILVUS] {error_msg}")
             traceback.print_exc()
             raise
     
@@ -248,24 +249,19 @@ class VectorStore:
         Tìm kiếm sản phẩm tương tự với query
         """
         logger.info(f"Tìm kiếm với query: '{query}', top_k={top_k}")
-        print(f"[QDRANT] Tìm kiếm với query: '{query}', top_k={top_k}")
-        
-        # Kiểm tra xem collection có tồn tại không
-        if not self._check_collection_exists():
-            logger.warning(f"Collection '{self.collection_name}' không tồn tại. Không thể tìm kiếm.")
-            print(f"[QDRANT] Collection '{self.collection_name}' không tồn tại. Không thể tìm kiếm.")
-            return []
+        print(f"[MILVUS] Tìm kiếm với query: '{query}', top_k={top_k}")
         
         try:
             # Thực hiện similarity search
             logger.info("Đang thực hiện similarity search...")
-            print("[QDRANT] Đang thực hiện similarity search...")
+            print("[MILVUS] Đang thực hiện similarity search...")
             
-            docs_with_scores = self.db.similarity_search_with_score(query, k=top_k)
+            docs_with_scores = self.vector_store.similarity_search_with_score(query, k=top_k)
             
             # Chuyển đổi kết quả sang định dạng phù hợp
             results = []
             for doc, score in docs_with_scores:
+                # Với Milvus, score là khoảng cách nên cần đảo lại để tính relevance
                 product = {
                     "id": doc.metadata["product_id"],
                     "name": doc.metadata["name"],
@@ -275,18 +271,18 @@ class VectorStore:
                     "category": doc.metadata.get("category", ""),
                     "status": doc.metadata.get("status", ""),
                     "quantity": doc.metadata.get("quantity", 0),
-                    "relevance_score": 1 - score  # Convert distance to similarity score
+                    "relevance_score": 1.0 - score / 100.0 if score < 100 else 0.0  # Chuẩn hóa score
                 }
                 results.append(product)
             
             logger.info(f"Tìm thấy {len(results)} kết quả")
-            print(f"[QDRANT] Tìm thấy {len(results)} kết quả")
+            print(f"[MILVUS] Tìm thấy {len(results)} kết quả")
             return results
             
         except Exception as e:
             error_msg = f"Lỗi khi thực hiện tìm kiếm: {str(e)}"
             logger.error(error_msg)
-            print(f"[QDRANT] {error_msg}")
+            print(f"[MILVUS] {error_msg}")
             return []
     
     def clear(self):
@@ -294,29 +290,39 @@ class VectorStore:
         Xóa toàn bộ dữ liệu trong vector database
         """
         logger.info(f"Bắt đầu xóa collection '{self.collection_name}'")
-        print(f"[QDRANT] Bắt đầu xóa collection '{self.collection_name}'")
+        print(f"[MILVUS] Bắt đầu xóa collection '{self.collection_name}'")
         
         try:
+            # Kiểm tra collection tồn tại
             if self._check_collection_exists():
-                logger.info(f"Đang xóa collection '{self.collection_name}'...")
-                print(f"[QDRANT] Đang xóa collection '{self.collection_name}'...")
-                
-                self.client.delete_collection(collection_name=self.collection_name)
-                
+                # Xóa collection
+                utility.drop_collection(self.collection_name)
                 logger.info(f"Đã xóa collection '{self.collection_name}'")
-                print(f"[QDRANT] Đã xóa collection '{self.collection_name}'")
+                print(f"[MILVUS] Đã xóa collection '{self.collection_name}'")
+                
+                # Tạo lại collection
+                logger.info(f"Đang tạo lại collection '{self.collection_name}'")
+                print(f"[MILVUS] Đang tạo lại collection '{self.collection_name}'")
+                
+                # Tạo collection mới
+                connection_args = {"uri": self.uri}
+                self.vector_store = Milvus(
+                    embedding_function=self.embedding_function,
+                    collection_name=self.collection_name,
+                    connection_args=connection_args,
+                    auto_id=True
+                )
+                
+                logger.info(f"Đã tạo lại collection '{self.collection_name}' thành công")
+                print(f"[MILVUS] Đã tạo lại collection '{self.collection_name}' thành công")
             else:
-                logger.warning(f"Collection '{self.collection_name}' không tồn tại, không cần xóa")
-                print(f"[QDRANT] Collection '{self.collection_name}' không tồn tại, không cần xóa")
-            
-            # Tạo lại collection
-            self._create_collection()
-            self._init_db()
-            
+                logger.info(f"Collection '{self.collection_name}' không tồn tại, không cần xóa")
+                print(f"[MILVUS] Collection '{self.collection_name}' không tồn tại, không cần xóa")
+                
         except Exception as e:
             error_msg = f"Lỗi khi xóa collection: {str(e)}"
             logger.error(error_msg)
-            print(f"[QDRANT] {error_msg}")
+            print(f"[MILVUS] {error_msg}")
             traceback.print_exc()
 
 # Singleton instance

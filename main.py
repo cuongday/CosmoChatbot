@@ -46,17 +46,30 @@ app = FastAPI(
 )
 
 # Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS.split(","),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+origins = settings.CORS_ORIGINS.split(",")
+# Check if "*" is in origins
+if "*" in origins:
+    # Khi cho phép tất cả origin, không thể đặt allow_credentials=True
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],  # Allow all origins
+        allow_credentials=False,  # Must be False when using ["*"]
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    # Khi chỉ định danh sách cụ thể, có thể đặt allow_credentials=True
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # Include API routes
 from app.api.endpoints import router
-app.include_router(router, prefix="/api")
+app.include_router(router, prefix="/api/v1")
 
 # Request logging middleware
 @app.middleware("http")
@@ -73,6 +86,12 @@ async def root():
         "message": "Cosmetic Shop Chatbot API",
         "docs": "/docs"
     }
+
+# Test CORS endpoint
+@app.options("/test-cors")
+@app.get("/test-cors")
+async def test_cors():
+    return {"cors_test": "success"}
 
 # Run application if executed directly
 if __name__ == "__main__":

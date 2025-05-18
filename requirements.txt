@@ -14,12 +14,12 @@ sqlmodel
 pymysql
 cryptography
 sentence-transformers
-qdrant-client
 httpx
 pytest
-
+langchain-huggingface
 # OpenAI Agents
 openai-agents
 
 # Utility dependencies
 python-multipart
+langchain-milvus
