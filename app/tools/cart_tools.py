@@ -37,7 +37,7 @@ def add_to_cart(product_id: str, quantity: int) -> Dict[str, Any]:
         return {"success": False, "message": error_msg}
 
 @function_tool("Cập nhật số lượng sản phẩm trong giỏ hàng")
-def update_cart(product_id: str, quantity: int) -> Dict[str, Any]:
+def update_cart(cart_detail_id: str, quantity: int) -> Dict[str, Any]:
     """
     Cập nhật số lượng sản phẩm trong giỏ hàng.
     
@@ -49,7 +49,7 @@ def update_cart(product_id: str, quantity: int) -> Dict[str, Any]:
         Dict: Thông tin giỏ hàng sau khi cập nhật
     """
     try:
-        result = spring_boot_client.update_cart_item(product_id, quantity)
+        result = spring_boot_client.update_cart_item(cart_detail_id, quantity)
         if result.get("success", False):
             # Lấy thông tin giỏ hàng mới nhất
             return spring_boot_client.get_cart()
@@ -60,7 +60,7 @@ def update_cart(product_id: str, quantity: int) -> Dict[str, Any]:
         return {"success": False, "message": error_msg}
 
 @function_tool("Xóa sản phẩm khỏi giỏ hàng")
-def remove_from_cart(product_id: str) -> Dict[str, Any]:
+def remove_from_cart(cart_detail_id: str) -> Dict[str, Any]:
     """
     Xóa sản phẩm khỏi giỏ hàng.
     
@@ -71,7 +71,7 @@ def remove_from_cart(product_id: str) -> Dict[str, Any]:
         Dict: Thông tin giỏ hàng sau khi xóa sản phẩm
     """
     try:
-        result = spring_boot_client.remove_from_cart(product_id)
+        result = spring_boot_client.remove_from_cart(cart_detail_id)
         if result.get("success", False):
             # Lấy thông tin giỏ hàng mới nhất
             return spring_boot_client.get_cart()

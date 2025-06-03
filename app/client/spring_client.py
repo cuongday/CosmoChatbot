@@ -65,17 +65,6 @@ class SpringBootClient:
         return None
     
     def search_products(self, query: str, page: int = 1, size: int = 10) -> List[Dict[str, Any]]:
-        """
-        Tìm kiếm sản phẩm sử dụng Spring Filter
-        
-        Args:
-            query: Query filter (ví dụ: name~'Passion' hoặc price>100000)
-            page: Trang (mặc định là 1)
-            size: Số lượng sản phẩm mỗi trang (mặc định là 10)
-            
-        Returns:
-            Danh sách sản phẩm phù hợp với filter
-        """
         url = f"{self.base_url}/api/v1/products"
         params = {
             "page": page,

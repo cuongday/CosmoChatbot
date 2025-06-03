@@ -23,11 +23,6 @@ CHÍNH SÁCH GIAO HÀNG:
 - Thời gian giao bánh: 60-90 phút trong giờ làm việc
 - Bánh sinh nhật cần đặt trước ít nhất 24 giờ
 
-CHÍNH SÁCH ĐỔI TRẢ:
-- Bánh mì, bánh ngọt: đổi trong ngày nếu có vấn đề về chất lượng
-- Không áp dụng đổi trả với bánh đặt riêng theo mẫu
-- Hoàn tiền 100% nếu lỗi thuộc về cửa hàng
-
 CÁC CÂU HỎI THƯỜNG GẶP:
 1. "Cửa hàng có nhận đặt bánh theo hình ảnh khách mang tới không?"
    → Có, chúng tôi nhận làm bánh theo hình ảnh với phụ phí từ 50,000đ tùy độ phức tạp
