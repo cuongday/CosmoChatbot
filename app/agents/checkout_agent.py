@@ -1,16 +1,23 @@
-from agents import Agent, Runner, function_tool
-from ..core.config import settings
-from ..tools.cart_tools import (
-    get_cart, create_order, get_order_info, 
-    get_payment_info, get_my_orders
-)
-from ..tools.product_tools import get_product_by_id, check_product_availability, rag_product_search
-from ..prompts.checkout_agent import CHECKOUT_AGENT_PROMPT
-from ..core.hooks import CustomAgentHooks
+from agents import Agent, Runner
+from typing import Any, Dict, List
+
 from ..client.spring_client import spring_boot_client
-from typing import List, Dict, Any, Optional
+from ..core.config import settings
+from ..core.hooks import CustomAgentHooks
+from ..prompts.checkout_agent import CHECKOUT_AGENT_PROMPT
+from ..tools.cart_tools import (
+    create_order,
+    get_cart,
+    get_my_orders,
+    get_order_info,
+    get_payment_info,
+)
+from ..tools.product_tools import (
+    check_product_availability,
+    get_product_by_id,
+    rag_product_search,
+)
 import json
-import asyncio
 
 class CheckoutAgentWrapper:
     """

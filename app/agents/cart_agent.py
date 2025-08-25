@@ -1,11 +1,22 @@
-from agents import Agent, Runner, function_tool
+from agents import Agent, Runner
+from typing import Any, Dict, List
+
 from ..core.config import settings
-from ..tools.cart_tools import add_to_cart, update_cart, remove_from_cart, get_cart, clear_cart
-from ..tools.product_tools import get_product_info, get_product_by_id, check_product_availability, rag_product_search
-from ..prompts.cart_agent import CART_AGENT_PROMPT
 from ..core.hooks import CustomAgentHooks
-from typing import List, Dict, Any
-import asyncio
+from ..prompts.cart_agent import CART_AGENT_PROMPT
+from ..tools.cart_tools import (
+    add_to_cart,
+    clear_cart,
+    get_cart,
+    remove_from_cart,
+    update_cart,
+)
+from ..tools.product_tools import (
+    check_product_availability,
+    get_product_by_id,
+    get_product_info,
+    rag_product_search,
+)
 import json
 
 class CartAgentWrapper:
