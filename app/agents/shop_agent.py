@@ -1,10 +1,18 @@
-from agents import Agent, Runner, function_tool
-from ..core.config import settings
-from ..tools.shop_tools import get_shop_info, get_shipping_info, get_return_policy, get_contact_info, get_user_orders, get_order_details
-from ..prompts.shop_agent import SHOP_AGENT_PROMPT
+from agents import Agent, Runner
+from typing import Any, Dict, List
+
 from ..client.spring_client import spring_boot_client
+from ..core.config import settings
 from ..core.hooks import CustomAgentHooks
-from typing import List, Dict, Any, Optional
+from ..prompts.shop_agent import SHOP_AGENT_PROMPT
+from ..tools.shop_tools import (
+    get_contact_info,
+    get_order_details,
+    get_return_policy,
+    get_shipping_info,
+    get_shop_info,
+    get_user_orders,
+)
 
 class ShopAgentWrapper:
     """

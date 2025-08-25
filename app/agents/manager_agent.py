@@ -1,15 +1,15 @@
-from agents import Agent, Runner, function_tool
-from ..core.config import settings
-from ..tools.manager_tools import get_assistant_info
-from ..prompts.manager_agent import MANAGER_AGENT_PROMPT
-from .product_agent import product_agent
-from .cart_agent import cart_agent
-from .shop_agent import shop_agent
-from .checkout_agent import checkout_agent
-from ..core.hooks import CustomAgentHooks
+from agents import Agent, Runner
+from typing import Any, Dict, List
+
 from ..client.spring_client import spring_boot_client
-from typing import List, Dict, Any, Optional
-import asyncio
+from ..core.config import settings
+from ..core.hooks import CustomAgentHooks
+from ..prompts.manager_agent import MANAGER_AGENT_PROMPT
+from ..tools.manager_tools import get_assistant_info
+from .cart_agent import cart_agent
+from .checkout_agent import checkout_agent
+from .product_agent import product_agent
+from .shop_agent import shop_agent
 
 class ManagerAgentWrapper:
     """

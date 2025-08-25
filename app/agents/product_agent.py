@@ -1,10 +1,16 @@
-from agents import Agent, Runner, function_tool
-from ..core.config import settings
-from ..tools.product_tools import get_product_by_id, rag_product_search, check_product_availability, find_products_by_price_range
-from ..prompts.product_agent import PRODUCT_AGENT_PROMPT
+from agents import Agent, Runner
+from typing import Any, Dict, List
+
 from ..client.spring_client import spring_boot_client
+from ..core.config import settings
 from ..core.hooks import CustomAgentHooks
-from typing import List, Dict, Any, Optional
+from ..prompts.product_agent import PRODUCT_AGENT_PROMPT
+from ..tools.product_tools import (
+    check_product_availability,
+    find_products_by_price_range,
+    get_product_by_id,
+    rag_product_search,
+)
 import json
 
 class ProductAgentWrapper:

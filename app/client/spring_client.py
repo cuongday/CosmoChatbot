@@ -1,7 +1,7 @@
+from typing import Any, Dict, List, Optional
+
 import requests
-import random
-import json
-from typing import Dict, List, Any, Optional
+
 from ..core.config import settings
 
 class SpringBootClient:
