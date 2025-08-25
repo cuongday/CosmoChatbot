@@ -78,6 +78,14 @@ class ConversationService:
             .limit(limit)
         return self.session.exec(query).all()
 
+    def get_last_message(self, conversation_id: str) -> Optional[Message]:
+        """Get the most recent message in a conversation."""
+        query = select(Message) \
+            .where(Message.conversation_id == conversation_id) \
+            .order_by(Message.created_at.desc()) \
+            .limit(1)
+        return self.session.exec(query).first()
+
     def get_all_messages(self, conversation_id: str) -> List[Message]:
         """Get all messages from a conversation, ordered by created_at."""
         query = select(Message) \

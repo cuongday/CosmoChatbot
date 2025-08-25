@@ -12,6 +12,7 @@ from ..tools.product_tools import (
     rag_product_search,
 )
 import json
+from ..memory.memory_manager import MemoryManager
 
 class ProductAgentWrapper:
     """
@@ -143,17 +144,7 @@ class ProductAgentWrapper:
         spring_boot_client.update_auth_token(auth_token)
         
         # Kết hợp lịch sử hội thoại với tin nhắn hiện tại
-        combined_message = message
-        if conversation_history and len(conversation_history) > 0:
-            # Lấy tối đa 5 tin nhắn gần nhất
-            recent_history = conversation_history[-5:] if len(conversation_history) > 5 else conversation_history
-            
-            history_text = ""
-            for msg in recent_history:
-                role = "Người dùng" if msg["role"] == "user" else "Trợ lý"
-                history_text += f"{role}: {msg['content']}\n"
-            
-            combined_message = f"Lịch sử hội thoại gần đây:\n{history_text}\nNgười dùng hiện tại: {message}"
+        combined_message = MemoryManager.build_prompt(message, conversation_history)
         
         # Sử dụng Runner với chuỗi tin nhắn đã kết hợp
         result = await Runner.run(self.agent, combined_message)
