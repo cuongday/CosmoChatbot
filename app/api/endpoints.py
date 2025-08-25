@@ -18,6 +18,7 @@ from ..models.api_models import ChatRequest, ChatResponse, ProductRequest, Produ
 from ..db.database import get_session
 from ..db.services import ConversationService
 from ..db.models import Conversation, Message
+from ..memory.memory_manager import MemoryManager
 
 router = APIRouter()
 
@@ -43,6 +44,7 @@ async def chat(
             
         # Khởi tạo conversation service
         conversation_service = ConversationService(session)
+        memory_manager = MemoryManager(conversation_service)
         
         # Xử lý conversation_id/thread_id
         thread_id = request.thread_id
@@ -56,7 +58,7 @@ async def chat(
             
         # Lưu tin nhắn của người dùng
         if thread_id:
-            conversation_service.add_message(
+            memory_manager.add_message(
                 conversation_id=thread_id,
                 role="user",
                 content=request.message,
@@ -64,7 +66,7 @@ async def chat(
             )
             
             # Lấy lịch sử trò chuyện từ database
-            conversation_history = conversation_service.get_conversation_history(thread_id)
+            conversation_history = memory_manager.get_recent_history(thread_id, limit=10)
         else:
             conversation_history = []
             
@@ -113,7 +115,7 @@ async def chat(
                 
             # Lưu câu trả lời từ agent vào database
             if thread_id:
-                conversation_service.add_message(
+                memory_manager.add_message(
                     conversation_id=thread_id,
                     role="assistant",
                     content=response.get("message", ""),
@@ -128,7 +130,7 @@ async def chat(
         else:
             # Nếu không có chuyển tiếp, lưu và trả về response trực tiếp từ manager
             if thread_id:
-                conversation_service.add_message(
+                memory_manager.add_message(
                     conversation_id=thread_id,
                     role="assistant",
                     content=manager_response.get("message", ""),
